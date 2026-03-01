@@ -8,7 +8,7 @@ Smart glasses system that coaches speakers in real-time. Three components:
 
 ## Stack
 - STT: Deepgram (real-time streaming)
-- TTS: ElevenLabs
+- TTS: Deepgram Aura
 - Vision: MediaPipe Face Mesh
 - Audio analysis: Deepgram + librosa
 - Coaching: rules-based (coaching.py), transformer model for post-session only (models/fluency.py)

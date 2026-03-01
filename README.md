@@ -14,7 +14,7 @@ Cue is a real-time presentation coaching system using smart glasses. It helps sp
 
 ## Getting started
 
-1. Copy `.env.example` to `.env` and fill in the required API keys (Supabase, Deepgram, ElevenLabs, OpenAI; see comments in `.env.example`).
+1. Copy `.env.example` to `.env` and fill in the required API keys (Supabase, Deepgram, OpenAI; see comments in `.env.example`). Use the Supabase **Secret key** for `SUPABASE_KEY` (backend needs full DB access) and the **Publishable key** for `NEXT_PUBLIC_SUPABASE_KEY` in `packages/web/.env.local`.
 2. Run Supabase migrations and optionally seed data (see `supabase/`).
 3. Start each piece:
 

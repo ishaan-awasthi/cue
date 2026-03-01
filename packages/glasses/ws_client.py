@@ -46,23 +46,10 @@ MAX_RECONNECTS = 10
 # ---------------------------------------------------------------------------
 
 def _play_audio_bytes(audio_bytes: bytes) -> None:
-    """Play MP3/WAV bytes through the default output device using simpleaudio.
-
-    simpleaudio expects PCM WAV.  If ElevenLabs returns MP3, we decode it
-    first via the `pydub` library (optional dependency).
-    """
+    """Play raw linear16 PCM bytes (24 kHz, mono) through the default output device."""
     try:
-        # Try decoding as MP3 → PCM via pydub if available
-        try:
-            from pydub import AudioSegment
-            import io
-            seg = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
-            pcm = seg.raw_data
-            wave_obj = sa.WaveObject(pcm, seg.channels, seg.sample_width, seg.frame_rate)
-        except Exception:
-            # Assume raw PCM 16-bit mono 24 kHz (ElevenLabs output)
-            wave_obj = sa.WaveObject(audio_bytes, 1, 2, 24000)
-
+        # Deepgram returns raw linear16 PCM — no decoding needed
+        wave_obj = sa.WaveObject(audio_bytes, num_channels=1, bytes_per_sample=2, sample_rate=24000)
         play_obj = wave_obj.play()
         play_obj.wait_done()
     except Exception as exc:

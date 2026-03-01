@@ -11,9 +11,8 @@ class Settings(BaseSettings):
     # Deepgram
     DEEPGRAM_API_KEY: str
 
-    # ElevenLabs
-    ELEVENLABS_API_KEY: str
-    ELEVENLABS_VOICE_ID: str
+    # Deepgram TTS voice model (Aura range)
+    DEEPGRAM_TTS_MODEL: str = "aura-asteria-en"
 
     # OpenAI
     OPENAI_API_KEY: str

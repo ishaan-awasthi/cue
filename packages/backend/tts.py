@@ -1,41 +1,33 @@
-"""ElevenLabs TTS wrapper.  Returns raw audio bytes suitable for playback through an earpiece."""
+"""Deepgram Aura TTS wrapper. Returns raw PCM bytes (linear16, 24 kHz, mono)."""
 
 import httpx
 
 from .config import settings
 
-_BASE_URL = "https://api.elevenlabs.io/v1"
-
-# Voice settings tuned for a calm, quiet whisper into an earpiece
-_VOICE_SETTINGS = {
-    "stability": 0.75,
-    "similarity_boost": 0.75,
-    "style": 0.0,
-    "use_speaker_boost": False,
-}
+_SPEAK_URL = "https://api.deepgram.com/v1/speak"
 
 
 async def synthesize(text: str) -> bytes:
-    """Convert *text* to speech and return raw MP3 bytes.
-
-    Uses the ElevenLabs streaming endpoint for lower latency on longer texts
-    (Q&A answers).  Falls back to the standard endpoint if streaming is not
-    available.
-    """
-    url = f"{_BASE_URL}/text-to-speech/{settings.ELEVENLABS_VOICE_ID}/stream"
-    headers = {
-        "xi-api-key": settings.ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
-        "Accept": "audio/mpeg",
+    """Convert *text* to speech and return raw linear16 PCM bytes at 24 kHz mono."""
+    params = {
+        "model": settings.DEEPGRAM_TTS_MODEL,
+        "encoding": "linear16",
+        "sample_rate": "24000",
+        "container": "none",
     }
-    payload = {
-        "text": text,
-        "model_id": "eleven_turbo_v2",
-        "voice_settings": _VOICE_SETTINGS,
+    headers = {
+        "Authorization": f"Token {settings.DEEPGRAM_API_KEY}",
+        "Content-Type": "application/json",
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
-        async with client.stream("POST", url, json=payload, headers=headers) as resp:
+        async with client.stream(
+            "POST",
+            _SPEAK_URL,
+            params=params,
+            headers=headers,
+            json={"text": text},
+        ) as resp:
             resp.raise_for_status()
             chunks: list[bytes] = []
             async for chunk in resp.aiter_bytes():
