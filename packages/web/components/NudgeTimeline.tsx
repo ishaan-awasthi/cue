@@ -11,14 +11,14 @@ interface Props {
 }
 
 const NUDGE_COLORS: Record<string, string> = {
-  filler_word_rate: "bg-yellow-100 border-yellow-400 text-yellow-800",
-  attention_score: "bg-red-100 border-red-400 text-red-800",
-  words_per_minute: "bg-blue-100 border-blue-400 text-blue-800",
-  volume_rms: "bg-purple-100 border-purple-400 text-purple-800",
-  pitch_variance: "bg-orange-100 border-orange-400 text-orange-800",
+  filler_word_rate: "bg-aqua/20 border-aqua/50 text-aqua",
+  attention_score: "bg-gray-600 border-gray-500 text-gray-200",
+  words_per_minute: "bg-aqua/20 border-aqua/50 text-aqua",
+  volume_rms: "bg-gray-700 border-gray-500 text-gray-200",
+  pitch_variance: "bg-gray-700 border-gray-500 text-gray-200",
 };
 
-const QA_COLOR = "bg-indigo-100 border-indigo-400 text-indigo-800";
+const QA_COLOR = "bg-aqua/20 border-aqua/50 text-aqua";
 
 export default function NudgeTimeline({ events, sessionStartedAt, onSeek }: Props) {
   const nudges = events.filter((e) => e.event_type === "nudge");
@@ -28,7 +28,7 @@ export default function NudgeTimeline({ events, sessionStartedAt, onSeek }: Prop
     ...nudges.map((e) => ({
       event: e,
       label: (e.payload.text as string) ?? "Nudge",
-      color: NUDGE_COLORS[(e.payload.trigger_signal as string) ?? ""] ?? "bg-gray-100 border-gray-400 text-gray-800",
+      color: NUDGE_COLORS[(e.payload.trigger_signal as string) ?? ""] ?? "bg-gray-700 border-gray-500 text-gray-200",
     })),
     ...qaEvents.map((e) => ({
       event: e,
@@ -40,7 +40,7 @@ export default function NudgeTimeline({ events, sessionStartedAt, onSeek }: Prop
   ].sort((a, b) => new Date(a.event.timestamp).getTime() - new Date(b.event.timestamp).getTime());
 
   if (!timeline.length) {
-    return <p className="text-sm text-gray-400">No nudges or Q&A events in this session.</p>;
+    return <p className="text-sm text-gray-500">No nudges or Q&A events in this session.</p>;
   }
 
   const sessionStart = new Date(sessionStartedAt).getTime();
@@ -48,7 +48,7 @@ export default function NudgeTimeline({ events, sessionStartedAt, onSeek }: Prop
   return (
     <div className="relative">
       {/* Vertical stem */}
-      <div className="absolute left-3 top-0 bottom-0 w-px bg-gray-200" />
+      <div className="absolute left-3 top-0 bottom-0 w-px bg-gray-600" />
 
       <ul className="space-y-4 pl-8">
         {timeline.map(({ event, label, color }) => {
@@ -67,8 +67,8 @@ export default function NudgeTimeline({ events, sessionStartedAt, onSeek }: Prop
               <span
                 className={`absolute -left-5 mt-1 w-3 h-3 rounded-full border-2 ${
                   event.event_type === "qa_event"
-                    ? "border-indigo-500 bg-indigo-200"
-                    : "border-gray-400 bg-white"
+                    ? "border-aqua bg-aqua/30"
+                    : "border-gray-500 bg-gray-700"
                 }`}
               />
 

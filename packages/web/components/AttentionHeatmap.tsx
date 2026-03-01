@@ -19,9 +19,9 @@ interface Props {
 
 /** Returns a CSS color string based on attention score 0–1. */
 function attentionColor(score: number): string {
-  if (score >= 0.75) return "#22c55e"; // green
-  if (score >= 0.5) return "#eab308";  // yellow
-  return "#ef4444";                    // red
+  if (score >= 0.75) return "#00d4aa"; // aqua
+  if (score >= 0.5) return "#737373";  // gray
+  return "#525252";                    // gray-600
 }
 
 // Custom dot to colour by value
@@ -38,7 +38,7 @@ function ColoredDot(props: {
 export default function AttentionHeatmap({ data }: Props) {
   if (!data.length) {
     return (
-      <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
+      <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
         No audience data
       </div>
     );
@@ -46,7 +46,7 @@ export default function AttentionHeatmap({ data }: Props) {
 
   return (
     <div className="w-full">
-      <p className="text-sm font-medium text-gray-700 mb-2">Audience Attention</p>
+      <p className="text-sm font-medium text-gray-300 mb-2">Audience Attention</p>
 
       {/* Gradient colour bar */}
       <div className="flex w-full h-3 rounded overflow-hidden mb-3">
@@ -66,11 +66,11 @@ export default function AttentionHeatmap({ data }: Props) {
         <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="attentionGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+              <stop offset="5%" stopColor="#00d4aa" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#00d4aa" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#404040" />
           <XAxis
             dataKey="timestamp"
             tickFormatter={(v) => {
@@ -80,13 +80,13 @@ export default function AttentionHeatmap({ data }: Props) {
                 return v;
               }
             }}
-            tick={{ fontSize: 10, fill: "#6b7280" }}
+            tick={{ fontSize: 10, fill: "#a3a3a3" }}
             minTickGap={40}
           />
           <YAxis
             domain={[0, 1]}
             tickFormatter={(v) => `${Math.round(v * 100)}%`}
-            tick={{ fontSize: 10, fill: "#6b7280" }}
+            tick={{ fontSize: 10, fill: "#a3a3a3" }}
             width={40}
           />
           <Tooltip
@@ -102,7 +102,7 @@ export default function AttentionHeatmap({ data }: Props) {
           <Area
             type="monotone"
             dataKey="value"
-            stroke="#22c55e"
+            stroke="#00d4aa"
             fill="url(#attentionGrad)"
             strokeWidth={2}
             dot={<ColoredDot />}
@@ -114,13 +114,13 @@ export default function AttentionHeatmap({ data }: Props) {
       {/* Legend */}
       <div className="flex gap-4 mt-2 text-xs text-gray-500">
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded-full bg-green-500" /> Engaged ≥ 75%
+          <span className="inline-block w-3 h-3 rounded-full bg-aqua" /> Engaged ≥ 75%
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded-full bg-yellow-400" /> Drifting 50–74%
+          <span className="inline-block w-3 h-3 rounded-full bg-gray-500" /> Drifting 50–74%
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded-full bg-red-500" /> Lost &lt; 50%
+          <span className="inline-block w-3 h-3 rounded-full bg-gray-600" /> Lost &lt; 50%
         </span>
       </div>
     </div>

@@ -73,19 +73,19 @@ export default function FileUploader({ onUploaded }: Props) {
       onDragLeave={() => setIsDragging(false)}
       className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
         isDragging
-          ? "border-indigo-400 bg-indigo-50"
+          ? "border-aqua bg-aqua/10"
           : state === "error"
-          ? "border-red-300 bg-red-50"
+          ? "border-gray-500 bg-gray-800/50"
           : state === "success"
-          ? "border-green-300 bg-green-50"
-          : "border-gray-300 bg-gray-50 hover:border-indigo-300 hover:bg-indigo-50"
+          ? "border-aqua/50 bg-aqua/5"
+          : "border-gray-600 bg-gray-800/30 hover:border-aqua/50 hover:bg-aqua/5"
       }`}
     >
       {state === "idle" && (
         <>
-          <p className="text-gray-600 text-sm">
+          <p className="text-gray-400 text-sm">
             Drag &amp; drop a file here, or{" "}
-            <label className="text-indigo-600 underline cursor-pointer">
+            <label className="text-aqua underline cursor-pointer">
               browse
               <input
                 type="file"
@@ -95,25 +95,25 @@ export default function FileUploader({ onUploaded }: Props) {
               />
             </label>
           </p>
-          <p className="mt-1 text-xs text-gray-400">PDF, PPTX, DOCX, TXT, MD</p>
+          <p className="mt-1 text-xs text-gray-500">PDF, PPTX, DOCX, TXT, MD</p>
         </>
       )}
 
       {state === "uploading" && (
         <div className="flex flex-col items-center gap-2">
-          <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-indigo-600">Uploading &amp; indexing…</p>
+          <div className="w-6 h-6 border-2 border-aqua border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-aqua">Uploading &amp; indexing…</p>
         </div>
       )}
 
       {state === "success" && uploadedFile && (
         <div className="flex flex-col items-center gap-1">
-          <p className="text-green-700 font-medium text-sm">✓ Uploaded successfully</p>
+          <p className="text-aqua font-medium text-sm">✓ Uploaded successfully</p>
           <p className="text-xs text-gray-500">
             {uploadedFile.filename} — {uploadedFile.chunk_count} chunks indexed
           </p>
           <button
-            className="mt-2 text-xs text-indigo-600 underline"
+            className="mt-2 text-xs text-aqua underline hover:no-underline"
             onClick={() => setState("idle")}
           >
             Upload another
@@ -123,10 +123,10 @@ export default function FileUploader({ onUploaded }: Props) {
 
       {state === "error" && (
         <div className="flex flex-col items-center gap-1">
-          <p className="text-red-600 font-medium text-sm">Upload failed</p>
-          <p className="text-xs text-red-500">{errorMsg}</p>
+          <p className="text-gray-300 font-medium text-sm">Upload failed</p>
+          <p className="text-xs text-gray-500">{errorMsg}</p>
           <button
-            className="mt-2 text-xs text-indigo-600 underline"
+            className="mt-2 text-xs text-aqua underline hover:no-underline"
             onClick={() => setState("idle")}
           >
             Try again
