@@ -30,6 +30,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from .config import settings
 from .db import queries
@@ -285,6 +286,27 @@ async def delete_file(file_id: str, user_id: str = Depends(get_user_id)):
 @app.get("/files", response_model=list[UploadedFile])
 async def list_files(user_id: str = Depends(get_user_id)):
     return await asyncio_to_thread(queries.list_files, user_id)
+
+
+# ---------------------------------------------------------------------------
+# TTS test
+# ---------------------------------------------------------------------------
+
+@app.post("/tts/test")
+async def test_tts(body: dict):
+    """Synthesize arbitrary text via Deepgram Aura and return raw PCM audio.
+    Useful for verifying TTS independently of a live session."""
+    from .tts import synthesize
+
+    text = body.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="'text' field is required")
+
+    audio = await synthesize(text)
+    return Response(
+        content=audio,
+        media_type="audio/L16;rate=24000;channels=1",
+    )
 
 
 # ---------------------------------------------------------------------------
