@@ -97,12 +97,12 @@ export default function TranscriptPlayer({ events, sessionStartedAt, currentTime
 
   if (!tokens.length) {
     return (
-      <div className="text-sm text-gray-400 italic">No transcript available for this session.</div>
+      <div className="text-sm text-gray-500 italic">No transcript available for this session.</div>
     );
   }
 
   return (
-    <div className="font-mono text-sm leading-7 whitespace-pre-wrap break-words select-text">
+    <div className="font-mono text-sm leading-7 whitespace-pre-wrap break-words select-text text-gray-300">
       {tokens.map((token, i) => {
         const isActive =
           currentTime !== undefined &&
@@ -113,12 +113,12 @@ export default function TranscriptPlayer({ events, sessionStartedAt, currentTime
         const isQA = qaSeconds.has(Math.floor(token.start));
 
         let bg = "";
-        if (isQA) bg = "bg-blue-100";
-        else if (isLowAttention) bg = "bg-red-100";
+        if (isQA) bg = "bg-aqua/20";
+        else if (isLowAttention) bg = "bg-gray-600";
 
         let textClass = "";
-        if (token.isFiller) textClass = "text-yellow-700 font-semibold underline decoration-dotted";
-        if (isActive) textClass += " ring-1 ring-indigo-500 rounded";
+        if (token.isFiller) textClass = "text-aqua font-semibold underline decoration-dotted";
+        if (isActive) textClass += " ring-1 ring-aqua rounded";
 
         return (
           <span

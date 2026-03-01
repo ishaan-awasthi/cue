@@ -1,9 +1,19 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY!;
+let _client: SupabaseClient | null = null;
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+function getClient(): SupabaseClient {
+  if (_client) return _client;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_KEY;
+  if (!url || !key) throw new Error("NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_KEY must be set");
+  _client = createClient(url, key);
+  return _client;
+}
+
+export const supabase = {
+  from: (table: string) => getClient().from(table),
+} as SupabaseClient;
 
 // ---------------------------------------------------------------------------
 // Types (mirror backend db/models.py)

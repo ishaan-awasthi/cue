@@ -18,6 +18,7 @@ import json
 import logging
 from typing import Annotated
 
+from pydantic import BaseModel
 from fastapi import (
     Depends,
     FastAPI,
@@ -93,6 +94,50 @@ async def get_session_events(session_id: str, user_id: str = Depends(get_user_id
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
     return await asyncio_to_thread(queries.get_session_events, session_id)
+
+
+# ---------------------------------------------------------------------------
+# Prep chat (GPT clarifying questions before a session)
+# ---------------------------------------------------------------------------
+
+CHAT_SYSTEM_PROMPT = """You are a supportive public-speaking coach helping someone prepare for an upcoming conversation or presentation. They may have uploaded context (slides, notes) for the session. Your job is to ask brief, clarifying questions so their live session can be more tailored—e.g. goal of the conversation, audience, key points they want to practice, or any concerns. Keep replies concise (1–3 short paragraphs) and ask at most 1–2 questions at a time. Be warm and professional."""
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[dict] = []
+
+
+@app.post("/sessions/{session_id}/chat")
+async def session_chat(
+    session_id: str,
+    user_id: str = Depends(get_user_id),
+    body: ChatRequest | None = None,
+):
+    """Send a message and get a GPT reply for prep clarifying questions."""
+    from openai import AsyncOpenAI
+
+    body = body or ChatRequest(message="")
+    message = (body.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    history = body.history or []
+
+    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    for h in history[-20:]:  # last 20 turns
+        if isinstance(h, dict) and h.get("role") in ("user", "assistant") and h.get("content"):
+            messages.append({"role": h["role"], "content": str(h["content"])[:2000]})
+    messages.append({"role": "user", "content": message[:4000]})
+
+    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        max_tokens=500,
+        messages=messages,
+    )
+    reply = (response.choices[0].message.content or "").strip()
+    return {"reply": reply}
 
 
 # ---------------------------------------------------------------------------
