@@ -8,6 +8,8 @@
 
 import type { Session, UploadedFile } from "./supabase";
 
+export type { Session };
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Default user ID used in dev.  In production replace with real auth.
@@ -25,6 +27,16 @@ function headers(extra: Record<string, string> = {}): HeadersInit {
 // Sessions
 // ---------------------------------------------------------------------------
 
+export async function getSessions(): Promise<Session[]> {
+  const res = await fetch(`${BASE_URL}/sessions`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`getSessions failed: ${res.statusText}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
 export async function createSession(): Promise<Session> {
   const res = await fetch(`${BASE_URL}/sessions`, {
     method: "POST",
@@ -32,6 +44,36 @@ export async function createSession(): Promise<Session> {
   });
   if (!res.ok) throw new Error(`createSession failed: ${res.statusText}`);
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Prep chat (GPT)
+// ---------------------------------------------------------------------------
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export async function sendChatMessage(
+  _sessionId: string,
+  message: string,
+  history: ChatMessage[]
+): Promise<string> {
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      history: history.map((m) => ({ role: m.role, content: m.content })),
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? `Chat failed: ${res.statusText}`);
+  }
+  const data = await res.json();
+  return data.reply ?? "";
 }
 
 // ---------------------------------------------------------------------------

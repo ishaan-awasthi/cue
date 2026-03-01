@@ -39,22 +39,22 @@ export default function FilesPage() {
   };
 
   return (
-    <main className="max-w-2xl mx-auto px-4 py-10">
+    <main className="max-w-2xl mx-auto px-4 py-10 bg-gray-950 text-gray-100 min-h-screen">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <div className="flex items-center gap-2 text-sm text-gray-400 mb-1">
-            <Link href="/" className="hover:text-indigo-600">Sessions</Link>
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
+            <Link href="/app" className="hover:text-aqua transition-colors">Sessions</Link>
             <span>/</span>
-            <span className="text-gray-700">Reference Files</span>
+            <span className="text-gray-400">Reference Files</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Reference Files</h1>
+          <h1 className="text-2xl font-bold text-white">Reference Files</h1>
         </div>
       </div>
 
       {/* Explanation */}
-      <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-5 py-4 text-sm text-indigo-700 mb-8">
-        <strong>How this works:</strong> Upload your slide deck, speaker notes, or any reference
+      <div className="rounded-xl bg-gray-800/50 border border-gray-700 px-5 py-4 text-sm text-gray-300 mb-8">
+        <strong className="text-aqua">How this works:</strong> Upload your slide deck, speaker notes, or any reference
         document. During a live session, if an audience member asks a question you pause on, Cue
         will search these files and whisper a concise answer into your earpiece.
       </div>
@@ -66,14 +66,14 @@ export default function FilesPage() {
 
       {/* File list */}
       <section>
-        <h2 className="text-base font-semibold text-gray-800 mb-3">Indexed Files</h2>
+        <h2 className="text-base font-semibold text-gray-300 mb-3">Indexed Files</h2>
 
         {loading && (
-          <p className="text-sm text-gray-400">Loading…</p>
+          <p className="text-sm text-gray-500">Loading…</p>
         )}
 
         {!loading && files.length === 0 && (
-          <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-400">
+          <div className="rounded-xl border border-dashed border-gray-700 p-8 text-center text-sm text-gray-500">
             No files uploaded yet.
           </div>
         )}
@@ -83,7 +83,7 @@ export default function FilesPage() {
             {files.map((f) => (
               <li
                 key={f.id}
-                className="flex items-center gap-4 rounded-lg border border-gray-200 bg-white px-4 py-3"
+                className="flex items-center gap-4 rounded-lg border border-gray-700 bg-gray-900/50 px-4 py-3"
               >
                 {/* Icon */}
                 <span className="text-xl shrink-0">
@@ -98,8 +98,8 @@ export default function FilesPage() {
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-800 truncate">{f.filename}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-sm font-medium text-gray-200 truncate">{f.filename}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
                     {f.chunk_count} chunks indexed ·{" "}
                     {format(new Date(f.uploaded_at), "MMM d, yyyy")}
                   </p>
@@ -109,7 +109,7 @@ export default function FilesPage() {
                 <button
                   onClick={() => handleDelete(f.id)}
                   disabled={deletingId === f.id}
-                  className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 shrink-0"
+                  className="text-xs text-gray-400 hover:text-aqua disabled:opacity-40 shrink-0 transition-colors"
                 >
                   {deletingId === f.id ? "Removing…" : "Remove"}
                 </button>
