@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 supabase
-deepgram-sdk>=3.0.0
+deepgram-sdk>=3.0.0,<4.0.0
 librosa
 pyaudio
 mediapipe
@@ -20,3 +20,4 @@ python-docx
 markdown
 tiktoken
 httpx
+python-multipart

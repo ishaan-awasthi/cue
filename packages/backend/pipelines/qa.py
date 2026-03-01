@@ -28,7 +28,7 @@ from ..config import settings
 from ..db import queries
 from ..db.models import QAEvent
 from ..pipelines import rag
-from ..tts import synthesize
+from ..tts import synthesize_streaming, UTTERANCE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +178,9 @@ class QAPipeline:
 
         if should_whisper:
             try:
-                audio_bytes = await synthesize(rag_answer)
-                await self._send_audio(audio_bytes)
+                await self._send_audio(UTTERANCE_SENTINEL)
+                async for chunk in synthesize_streaming(rag_answer):
+                    await self._send_audio(chunk)
             except Exception as exc:
                 logger.error("Q&A TTS failed: %s", exc)
 
