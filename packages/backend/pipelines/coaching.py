@@ -20,6 +20,7 @@ from ..config import settings
 from ..db import queries
 from ..db.models import AudioSignal, AudienceSignal, Nudge
 from ..tts import synthesize_streaming, UTTERANCE_SENTINEL
+from .audio import EMIT_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +34,12 @@ SendBytesCallback = Callable[[bytes], Awaitable[None]]
 # Constants
 # ---------------------------------------------------------------------------
 
-SIGNAL_WINDOW_SECONDS = 30
-MIN_WPM = 100.0
-MAX_WPM = 180.0
+SIGNAL_WINDOW_SECONDS = 5
+MIN_WPM = 20.0
+MAX_WPM = 160.0
 
 # Volume RMS below this for an extended window is considered "too quiet"
-VOLUME_THRESHOLD = 0.02
+VOLUME_THRESHOLD = 0.005
 # Pitch variance below this for an extended window is considered "monotone"
 PITCH_VARIANCE_THRESHOLD = 50.0
 
@@ -63,26 +64,30 @@ class CoachingPipeline:
         self._running = False
         self._nudge_task: asyncio.Task | None = None
 
-        # Track the last nudge type to avoid spamming the same nudge back-to-back
-        self._last_nudge: str | None = None
+        # Cooldown: track last fire time per nudge type to avoid spam
+        self._last_nudge_time: dict[str, float] = {}
+        self._nudge_cooldown_seconds: float = 15.0
+
+        # Delivery lock: don't start a new nudge while one is playing
+        self._nudge_in_progress: bool = False
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        print(f"[coaching] Starting CoachingPipeline for session {self._session_id} (nudge interval: {settings.NUDGE_INTERVAL_SECONDS}s)")
+        # print(f"[coaching] Starting CoachingPipeline for session {self._session_id} (nudge interval: {settings.NUDGE_INTERVAL_SECONDS}s)")
         self._running = True
         self._nudge_task = asyncio.create_task(self._nudge_loop())
 
     async def on_audio_signal(self, signal: AudioSignal) -> None:
         self._audio_signals.append(signal)
         self._trim_window()
-        print(
-            f"[coaching] Audio signal received — WPM={signal.words_per_minute}, "
-            f"fillers={signal.filler_word_count}, pitch_var={signal.pitch_variance:.4f}, "
-            f"volume={signal.volume_rms:.4f} | window size: {len(self._audio_signals)}"
-        )
+        # print(
+        #     f"[coaching] Audio signal received — WPM={signal.words_per_minute}, "
+        #     f"fillers={signal.filler_word_count}, pitch_var={signal.pitch_variance:.4f}, "
+        #     f"volume={signal.volume_rms:.4f} | window size: {len(self._audio_signals)}"
+        # )
         # Persist the signal as a session event
         await asyncio.to_thread(
             queries.insert_event,
@@ -94,11 +99,11 @@ class CoachingPipeline:
     async def on_audience_signal(self, signal: AudienceSignal) -> None:
         self._audience_signals.append(signal)
         self._trim_window()
-        print(
-            f"[coaching] Audience signal received — attention={signal.attention_score:.3f}, "
-            f"faces={signal.faces_detected}, looking_away_pct={signal.looking_away_pct:.3f} "
-            f"| window size: {len(self._audience_signals)}"
-        )
+        # print(
+        #     f"[coaching] Audience signal received — attention={signal.attention_score:.3f}, "
+        #     f"faces={signal.faces_detected}, looking_away_pct={signal.looking_away_pct:.3f} "
+        #     f"| window size: {len(self._audience_signals)}"
+        # )
         await asyncio.to_thread(
             queries.insert_event,
             self._session_id,
@@ -139,13 +144,15 @@ class CoachingPipeline:
             await asyncio.sleep(settings.NUDGE_INTERVAL_SECONDS)
             if not self._running:
                 break
-            print(f"[coaching] Evaluating nudge rules ({len(self._audio_signals)} audio, {len(self._audience_signals)} audience signals in window)...")
+            # print(f"[coaching] Evaluating nudge rules ({len(self._audio_signals)} audio, {len(self._audience_signals)} audience signals in window)...")
+            if self._nudge_in_progress:
+                continue
             nudge = self._evaluate()
             if nudge:
-                print(f"[coaching] Nudge triggered! trigger={nudge.trigger_signal} value={nudge.trigger_value} — \"{nudge.text}\"")
+                # print(f"[coaching] Nudge triggered! trigger={nudge.trigger_signal} value={nudge.trigger_value} — \"{nudge.text}\"")
                 await self._fire_nudge(nudge)
             else:
-                print("[coaching] No nudge needed — all thresholds within range")
+                pass  # print("[coaching] No nudge needed — all thresholds within range")
 
     def _evaluate(self) -> Nudge | None:
         """Evaluate all rules against current window averages. Returns the highest
@@ -160,50 +167,41 @@ class CoachingPipeline:
         # ----- Audio-based rules -----
         if audio_list:
             avg_wpm = sum(s.words_per_minute for s in audio_list) / len(audio_list)
-            avg_filler_rate = (
-                sum(s.filler_word_count for s in audio_list)
-                / (len(audio_list) * (5 / 60))  # signals cover 5s each, convert to per-minute
-            )
             avg_volume = sum(s.volume_rms for s in audio_list) / len(audio_list)
             avg_pitch_var = sum(s.pitch_variance for s in audio_list) / len(audio_list)
-            print(
-                f"[coaching] Window averages — WPM={avg_wpm:.1f} (ok: {MIN_WPM}-{MAX_WPM}), "
-                f"filler_rate={avg_filler_rate:.2f}/min (threshold: {settings.FILLER_WORD_RATE_THRESHOLD}), "
-                f"volume={avg_volume:.4f} (threshold: {VOLUME_THRESHOLD}), "
-                f"pitch_var={avg_pitch_var:.2f} (threshold: {PITCH_VARIANCE_THRESHOLD})"
-            )
 
-            if avg_filler_rate > settings.FILLER_WORD_RATE_THRESHOLD:
+            if any(s.filler_word_count > 1 for s in audio_list):
+                max_fillers = max(s.filler_word_count for s in audio_list)
                 return self._make_nudge(
-                    "Try to cut the filler words — your audience notices more than you think.",
+                    "cut filler words",
                     "filler_word_rate",
-                    round(avg_filler_rate, 2),
+                    float(max_fillers),
                 )
 
             if avg_wpm < MIN_WPM:
                 return self._make_nudge(
-                    "Pick up the pace a little — you've got the room.",
+                    "Pick up pace",
                     "words_per_minute",
                     round(avg_wpm, 1),
                 )
 
             if avg_wpm > MAX_WPM:
                 return self._make_nudge(
-                    "Slow down — let the ideas land.",
+                    "Slow down",
                     "words_per_minute",
                     round(avg_wpm, 1),
                 )
 
             if avg_volume < VOLUME_THRESHOLD:
                 return self._make_nudge(
-                    "Project your voice — speak up a bit.",
+                    "Project your voice",
                     "volume_rms",
                     round(avg_volume, 4),
                 )
 
             if avg_pitch_var < PITCH_VARIANCE_THRESHOLD and avg_wpm > 50:
                 return self._make_nudge(
-                    "Vary your tone — a little inflection goes a long way.",
+                    "Vary tone.",
                     "pitch_variance",
                     round(avg_pitch_var, 2),
                 )
@@ -211,10 +209,10 @@ class CoachingPipeline:
         # ----- Audience-based rules -----
         if audience_list:
             avg_attention = sum(s.attention_score for s in audience_list) / len(audience_list)
-            print(f"[coaching] Avg attention={avg_attention:.3f} (threshold: {settings.ATTENTION_THRESHOLD})")
+            # print(f"[coaching] Avg attention={avg_attention:.3f} (threshold: {settings.ATTENTION_THRESHOLD})")
             if avg_attention < settings.ATTENTION_THRESHOLD:
                 return self._make_nudge(
-                    "Re-engage the room — you're losing them.",
+                    "Re-engage room",
                     "attention_score",
                     round(avg_attention, 3),
                 )
@@ -222,8 +220,10 @@ class CoachingPipeline:
         return None
 
     def _make_nudge(self, text: str, trigger_signal: str, trigger_value: float) -> Nudge | None:
-        # Avoid firing the exact same nudge twice in a row
-        if self._last_nudge == trigger_signal:
+        import time
+        now = time.monotonic()
+        last = self._last_nudge_time.get(trigger_signal, 0.0)
+        if now - last < self._nudge_cooldown_seconds:
             return None
         return Nudge(
             text=text,
@@ -233,11 +233,13 @@ class CoachingPipeline:
         )
 
     async def _fire_nudge(self, nudge: Nudge) -> None:
+        import time
+        self._nudge_in_progress = True
         try:
             await self._send_audio(UTTERANCE_SENTINEL)
             async for chunk in synthesize_streaming(nudge.text):
                 await self._send_audio(chunk)
-            self._last_nudge = nudge.trigger_signal
+            self._last_nudge_time[nudge.trigger_signal] = time.monotonic()
 
             # Persist
             await asyncio.to_thread(
@@ -247,7 +249,9 @@ class CoachingPipeline:
                 nudge.model_dump(mode="json"),
             )
             logger.info("Nudge fired: %s (%.3f)", nudge.trigger_signal, nudge.trigger_value)
-            print(f"[coaching] Nudge persisted to DB")
+            # print(f"[coaching] Nudge persisted to DB")
         except Exception as exc:
             logger.error("Failed to fire nudge: %s", exc)
-            print(f"[coaching] ERROR firing nudge: {exc}")
+            # print(f"[coaching] ERROR firing nudge: {exc}")
+        finally:
+            self._nudge_in_progress = False

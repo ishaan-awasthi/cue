@@ -1,10 +1,10 @@
 """WebSocket client.
 
-Drains the shared queue from capture.py and streams data to the FastAPI
+Drains queues from capture.py and vision.py and streams data to the FastAPI
 backend over a single persistent WebSocket connection.
 
-- Video frames are base64-encoded and sent as JSON: {"type": "frame", "data": "<b64>"}
 - Audio is sent as raw binary WebSocket messages (bytes).
+- Speaker signals are sent as JSON: {"type": "speaker_signal", "attentive": bool, ...}
 
 Also listens for incoming messages from the backend (Deepgram Aura TTS audio
 for nudges or Q&A answers) and plays them through the default output device.
@@ -16,7 +16,7 @@ the client can interrupt the current playback and start the new one.
 from __future__ import annotations
 
 import asyncio
-import base64
+import dataclasses
 import json
 import os
 import queue as _queue
@@ -26,7 +26,8 @@ import simpleaudio as sa
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from .capture import AudioChunk, CaptureController, VideoFrame
+from .capture import AudioChunk, CaptureController
+from .vision import SpeakerSignal, SpeakerVision
 
 # ---------------------------------------------------------------------------
 # Configuration (from environment / defaults)
@@ -156,11 +157,14 @@ async def run(session_id: str, user_id: str) -> None:
         session_id=session_id,
         user_id=user_id,
     )
-    print(f"[ws_client] Connecting to {uri}")
+    # print(f"[ws_client] Connecting to {uri}")
 
     controller = CaptureController()
     controller.start()
-    print("[ws_client] Capture started (webcam + mic)")
+    # print("[ws_client] Audio capture started")
+
+    vision = SpeakerVision()
+    vision.start()
 
     player = AudioPlayer()
     player.start()
@@ -169,14 +173,18 @@ async def run(session_id: str, user_id: str) -> None:
     while reconnects < MAX_RECONNECTS:
         try:
             async with websockets.connect(uri, ping_interval=20, ping_timeout=20) as ws:
-                print("[ws_client] WebSocket connected")
-                reconnects = 0
+                # print("[ws_client] WebSocket connected")
+                reconnects = 0  # reset on successful connection
 
-                send_task = asyncio.create_task(_send_loop(ws, controller.queue))
+                # Task 1: send audio to backend
+                send_audio_task = asyncio.create_task(_send_audio_loop(ws, controller.queue))
+                # Task 2: send speaker signals to backend
+                send_vision_task = asyncio.create_task(_send_vision_loop(ws, vision.queue))
+                # Task 3: receive nudge/answer audio from backend
                 recv_task = asyncio.create_task(_recv_loop(ws, player))
 
                 done, pending = await asyncio.wait(
-                    [send_task, recv_task],
+                    [send_audio_task, send_vision_task, recv_task],
                     return_when=asyncio.FIRST_EXCEPTION,
                 )
                 for task in pending:
@@ -187,36 +195,46 @@ async def run(session_id: str, user_id: str) -> None:
 
         except (ConnectionClosed, OSError, Exception) as exc:
             reconnects += 1
-            print(f"[ws_client] Connection lost ({exc}). Reconnecting in {RECONNECT_DELAY}s "
-                  f"(attempt {reconnects}/{MAX_RECONNECTS})...")
+            # print(f"[ws_client] Connection lost ({exc}). Reconnecting in {RECONNECT_DELAY}s "
+            #       f"(attempt {reconnects}/{MAX_RECONNECTS})...")
             await asyncio.sleep(RECONNECT_DELAY)
 
-    print("[ws_client] Max reconnects reached — stopping.")
+    # print("[ws_client] Max reconnects reached — stopping.")
+    vision.stop()
     player.stop()
     controller.stop()
 
 
-async def _send_loop(
+async def _send_audio_loop(
     ws: websockets.WebSocketClientProtocol,
-    data_queue: "_queue.Queue[VideoFrame | AudioChunk]",
+    audio_queue: "_queue.Queue[AudioChunk]",
 ) -> None:
     loop = asyncio.get_running_loop()
     while True:
         try:
-            item = await loop.run_in_executor(None, _blocking_get, data_queue)
+            item = await loop.run_in_executor(None, _blocking_get, audio_queue)
         except Exception:
             await asyncio.sleep(0.005)
             continue
-
-        if isinstance(item, AudioChunk):
-            await ws.send(item.data)
-        elif isinstance(item, VideoFrame):
-            b64 = base64.b64encode(item.data).decode("ascii")
-            msg = json.dumps({"type": "frame", "data": b64})
-            await ws.send(msg)
+        await ws.send(item.data)
 
 
-def _blocking_get(q: "_queue.Queue") -> "VideoFrame | AudioChunk":
+async def _send_vision_loop(
+    ws: websockets.WebSocketClientProtocol,
+    vision_queue: "_queue.Queue[SpeakerSignal]",
+) -> None:
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            sig = await loop.run_in_executor(None, _blocking_get, vision_queue)
+        except Exception:
+            await asyncio.sleep(0.005)
+            continue
+        msg = json.dumps({"type": "speaker_signal", **dataclasses.asdict(sig)})
+        await ws.send(msg)
+
+
+def _blocking_get(q: "_queue.Queue") -> object:
     return q.get(timeout=0.1)
 
 
