@@ -53,14 +53,14 @@ export default function SessionDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-400 text-sm">
+      <div className="flex items-center justify-center h-64 text-gray-500 text-sm bg-gray-950">
         Loading session…
       </div>
     );
   }
 
   if (!session) {
-    return <div className="p-8 text-red-600">Session not found.</div>;
+    return <div className="p-8 text-gray-400 bg-gray-950 min-h-screen">Session not found.</div>;
   }
 
   const summary = session.summary as Record<string, number> | null;
@@ -76,12 +76,12 @@ export default function SessionDetailPage() {
   const attentionSeries = buildMetricSeries(events, "audience_signal", "attention_score");
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-10">
+    <main className="max-w-5xl mx-auto px-4 py-10 bg-gray-950 text-gray-100 min-h-screen">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-gray-400 mb-6">
-        <Link href="/" className="hover:text-indigo-600">Sessions</Link>
+      <div className="flex items-center gap-2 text-sm text-gray-500 mb-6">
+        <Link href="/app" className="hover:text-aqua transition-colors">Sessions</Link>
         <span>/</span>
-        <span className="text-gray-700">
+        <span className="text-gray-400">
           {format(new Date(session.started_at), "MMM d, yyyy")}
         </span>
       </div>
@@ -90,15 +90,15 @@ export default function SessionDetailPage() {
         {/* Main content */}
         <div className="flex-1 min-w-0">
           {/* Tabs */}
-          <div className="flex gap-1 mb-6 border-b border-gray-200">
+          <div className="flex gap-1 mb-6 border-b border-gray-700">
             {(["transcript", "nudges", "charts"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={`px-4 py-2 text-sm font-medium capitalize transition-colors ${
                   activeTab === tab
-                    ? "border-b-2 border-indigo-500 text-indigo-600"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "border-b-2 border-aqua text-aqua"
+                    : "text-gray-500 hover:text-gray-300"
                 }`}
               >
                 {tab}
@@ -106,14 +106,14 @@ export default function SessionDetailPage() {
             ))}
             <Link
               href={`/sessions/${sessionId}/report`}
-              className="ml-auto px-4 py-2 text-sm font-medium text-indigo-600 hover:underline"
+              className="ml-auto px-4 py-2 text-sm font-medium text-aqua hover:underline"
             >
               Full Report →
             </Link>
           </div>
 
           {activeTab === "transcript" && (
-            <div className="rounded-xl border border-gray-200 bg-white p-5 max-h-[60vh] overflow-y-auto">
+            <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5 max-h-[60vh] overflow-y-auto">
               <TranscriptPlayer
                 events={events}
                 sessionStartedAt={session.started_at}
@@ -123,7 +123,7 @@ export default function SessionDetailPage() {
           )}
 
           {activeTab === "nudges" && (
-            <div className="rounded-xl border border-gray-200 bg-white p-5">
+            <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
               <NudgeTimeline
                 events={events}
                 sessionStartedAt={session.started_at}
@@ -138,10 +138,10 @@ export default function SessionDetailPage() {
           )}
 
           {activeTab === "charts" && (
-            <div className="space-y-6 rounded-xl border border-gray-200 bg-white p-5">
-              <MetricsChart data={paceSeries} label="Speaking Pace (WPM)" color="#6366f1" unit=" wpm" yMin={0} />
-              <MetricsChart data={pitchSeries} label="Pitch Variance" color="#f59e0b" unit="" yMin={0} />
-              <MetricsChart data={volumeSeries} label="Volume (RMS)" color="#10b981" unit="" yMin={0} />
+            <div className="space-y-6 rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+              <MetricsChart data={paceSeries} label="Speaking Pace (WPM)" color="#00d4aa" unit=" wpm" yMin={0} />
+              <MetricsChart data={pitchSeries} label="Pitch Variance" color="#00d4aa" unit="" yMin={0} />
+              <MetricsChart data={volumeSeries} label="Volume (RMS)" color="#00d4aa" unit="" yMin={0} />
               <AttentionHeatmap data={attentionSeries} />
             </div>
           )}
@@ -149,21 +149,21 @@ export default function SessionDetailPage() {
 
         {/* Sidebar */}
         <aside className="w-full lg:w-64 shrink-0">
-          <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
+          <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5 space-y-4">
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-400">Score</p>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Score</p>
               <p className={`text-4xl font-bold mt-1 ${
                 (session.overall_score ?? 0) >= 80
-                  ? "text-green-600"
+                  ? "text-aqua"
                   : (session.overall_score ?? 0) >= 60
-                  ? "text-yellow-600"
-                  : "text-red-600"
+                  ? "text-gray-300"
+                  : "text-gray-400"
               }`}>
                 {session.overall_score != null ? Math.round(session.overall_score) : "—"}
               </p>
             </div>
 
-            <hr className="border-gray-100" />
+            <hr className="border-gray-700" />
 
             <Stat label="Duration" value={formatDur(session.duration_seconds)} />
             <Stat label="Nudges" value={String(nudgeCount)} />
@@ -172,7 +172,7 @@ export default function SessionDetailPage() {
 
             {summary && (
               <>
-                <hr className="border-gray-100" />
+                <hr className="border-gray-700" />
                 {summary.avg_wpm != null && (
                   <Stat label="Avg WPM" value={String(Math.round(summary.avg_wpm))} />
                 )}
@@ -192,7 +192,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between items-baseline">
       <span className="text-xs text-gray-500">{label}</span>
-      <span className="text-sm font-semibold text-gray-800">{value}</span>
+      <span className="text-sm font-semibold text-gray-200">{value}</span>
     </div>
   );
 }

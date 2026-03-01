@@ -1,3 +1,16 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    --color-aqua: #008b73;
+    --color-bg: #0a0a0a;
+    --color-surface: #171717;
+    --color-surface-elevated: #262626;
+    --color-border: #404040;
+    --color-text: #fafafa;
+    --color-text-muted: #a3a3a3;
+    --color-text-dim: #737373;
+  }
+}
