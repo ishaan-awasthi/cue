@@ -1,14 +1,12 @@
 /**
  * Typed fetch wrapper for FastAPI backend calls.
  * Base URL from NEXT_PUBLIC_API_URL env var.
- *
- * Most reads go through Supabase directly (lib/supabase.ts).
- * This file handles writes and operations requiring backend logic.
+ * All session, events, files, and report data is fetched from the backend for insights.
  */
 
-import type { Session, UploadedFile } from "./supabase";
+import type { Session, SessionEvent, UploadedFile } from "./supabase";
 
-export type { Session };
+export type { Session, SessionEvent, UploadedFile };
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -37,13 +35,39 @@ export async function getSessions(): Promise<Session[]> {
   return Array.isArray(data) ? data : [];
 }
 
+export async function getSession(sessionId: string): Promise<Session | null> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`getSession failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getSessionEvents(sessionId: string): Promise<SessionEvent[]> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/events`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`getSessionEvents failed: ${res.statusText}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
 export async function createSession(): Promise<Session> {
   const res = await fetch(`${BASE_URL}/sessions`, {
     method: "POST",
     headers: headers(),
   });
-  if (!res.ok) throw new Error(`createSession failed: ${res.statusText}`);
-  return res.json();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = (err as { detail?: string }).detail ?? res.statusText;
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  const data = await res.json();
+  if (!data?.id) throw new Error("Invalid session response");
+  return data as Session;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,13 +80,13 @@ export interface ChatMessage {
 }
 
 export async function sendChatMessage(
-  _sessionId: string,
+  sessionId: string,
   message: string,
   history: ChatMessage[]
 ): Promise<string> {
-  const res = await fetch("/api/chat", {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...headers(), "Content-Type": "application/json" },
     body: JSON.stringify({
       message,
       history: history.map((m) => ({ role: m.role, content: m.content })),
@@ -70,7 +94,7 @@ export async function sendChatMessage(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? `Chat failed: ${res.statusText}`);
+    throw new Error((err as { detail?: string }).detail ?? `Chat failed: ${res.statusText}`);
   }
   const data = await res.json();
   return data.reply ?? "";
@@ -104,8 +128,14 @@ export async function getSessionReport(sessionId: string): Promise<CoachingRepor
 // Files
 // ---------------------------------------------------------------------------
 
-export interface UploadResult {
-  file: UploadedFile;
+export async function listFiles(): Promise<UploadedFile[]> {
+  const res = await fetch(`${BASE_URL}/files`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`listFiles failed: ${res.statusText}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
 
 export async function uploadFile(file: File): Promise<UploadedFile> {
