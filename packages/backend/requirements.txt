@@ -20,3 +20,4 @@ python-docx
 markdown
 tiktoken
 httpx
+python-multipart
