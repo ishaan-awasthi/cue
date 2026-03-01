@@ -1,5 +1,34 @@
-# Pydantic BaseSettings reading all env vars from .env: SUPABASE_URL, SUPABASE_KEY, DEEPGRAM_API_KEY,
-# ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, OPENAI_API_KEY, NUDGE_INTERVAL_SECONDS (int, default 30),
-# ATTENTION_THRESHOLD (float, default 0.6), FILLER_WORD_RATE_THRESHOLD (float, default 3.0),
-# FLUENCY_MODEL_PATH (str), QA_MATCH_THRESHOLD (float, default 0.75), QA_SILENCE_TIMEOUT_SECONDS (int, default 4).
-# Single settings instance exported and imported everywhere.
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # Supabase
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
+
+    # Deepgram
+    DEEPGRAM_API_KEY: str
+
+    # ElevenLabs
+    ELEVENLABS_API_KEY: str
+    ELEVENLABS_VOICE_ID: str
+
+    # OpenAI
+    OPENAI_API_KEY: str
+
+    # Coaching thresholds
+    NUDGE_INTERVAL_SECONDS: int = 30
+    ATTENTION_THRESHOLD: float = 0.6
+    FILLER_WORD_RATE_THRESHOLD: float = 3.0
+
+    # Fluency model
+    FLUENCY_MODEL_PATH: str = "./models/fluency-model"
+
+    # Q&A pipeline
+    QA_MATCH_THRESHOLD: float = 0.75
+    QA_SILENCE_TIMEOUT_SECONDS: int = 4
+
+
+settings = Settings()

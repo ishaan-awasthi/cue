@@ -1,3 +1,87 @@
-// Typed fetch wrapper for FastAPI backend calls. Base URL from NEXT_PUBLIC_API_URL.
-// Functions: createSession(), getSessionReport(id), uploadFile(file), deleteFile(id).
-// Most reads go through Supabase directly — this file handles writes and operations requiring backend logic.
+/**
+ * Typed fetch wrapper for FastAPI backend calls.
+ * Base URL from NEXT_PUBLIC_API_URL env var.
+ *
+ * Most reads go through Supabase directly (lib/supabase.ts).
+ * This file handles writes and operations requiring backend logic.
+ */
+
+import type { Session, UploadedFile } from "./supabase";
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+// Default user ID used in dev.  In production replace with real auth.
+const DEFAULT_USER_ID =
+  process.env.NEXT_PUBLIC_USER_ID ?? "00000000-0000-0000-0000-000000000001";
+
+function headers(extra: Record<string, string> = {}): HeadersInit {
+  return {
+    "X-User-Id": DEFAULT_USER_ID,
+    ...extra,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+export async function createSession(): Promise<Session> {
+  const res = await fetch(`${BASE_URL}/sessions`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`createSession failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Report
+// ---------------------------------------------------------------------------
+
+export interface CoachingReport {
+  session_id: string;
+  report: {
+    what_went_well: string[];
+    areas_to_improve: string[];
+    fluency_summary: string;
+    key_moments: Array<{ timestamp: string; observation: string }>;
+    suggested_drills: string[];
+  };
+}
+
+export async function getSessionReport(sessionId: string): Promise<CoachingReport> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/report`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`getSessionReport failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Files
+// ---------------------------------------------------------------------------
+
+export interface UploadResult {
+  file: UploadedFile;
+}
+
+export async function uploadFile(file: File): Promise<UploadedFile> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE_URL}/files/upload`, {
+    method: "POST",
+    headers: headers(),   // no Content-Type — browser sets it for FormData
+    body: form,
+  });
+  if (!res.ok) throw new Error(`uploadFile failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function deleteFile(fileId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/files/${fileId}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`deleteFile failed: ${res.statusText}`);
+}
