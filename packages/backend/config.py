@@ -11,8 +11,10 @@ class Settings(BaseSettings):
     # Deepgram
     DEEPGRAM_API_KEY: str
 
-    # Deepgram TTS voice model (Aura range)
+    # Deepgram TTS
     DEEPGRAM_TTS_MODEL: str = "aura-asteria-en"
+    TTS_TIMEOUT_SECONDS: int = 10
+    TTS_MAX_RETRIES: int = 2
 
     # OpenAI
     OPENAI_API_KEY: str

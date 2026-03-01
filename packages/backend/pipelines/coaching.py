@@ -3,8 +3,8 @@
 Subscribes to AudioSignal and AudienceSignal events.
 Maintains a rolling 30-second window of signal history.
 Every NUDGE_INTERVAL_SECONDS checks thresholds; if any are crossed,
-synthesises a nudge via ElevenLabs and sends the audio bytes over the
-WebSocket to the glasses rig.
+synthesises a nudge via Deepgram Aura TTS and streams the audio chunks
+over the WebSocket to the glasses rig.
 All logic is explicit rules — no LLM calls.
 """
 
@@ -19,7 +19,7 @@ from typing import Callable, Awaitable
 from ..config import settings
 from ..db import queries
 from ..db.models import AudioSignal, AudienceSignal, Nudge
-from ..tts import synthesize
+from ..tts import synthesize_streaming, UTTERANCE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -234,10 +234,9 @@ class CoachingPipeline:
 
     async def _fire_nudge(self, nudge: Nudge) -> None:
         try:
-            print(f"[coaching] Synthesising nudge audio via TTS...")
-            audio_bytes = await synthesize(nudge.text)
-            print(f"[coaching] TTS returned {len(audio_bytes)} bytes — sending to glasses rig")
-            await self._send_audio(audio_bytes)
+            await self._send_audio(UTTERANCE_SENTINEL)
+            async for chunk in synthesize_streaming(nudge.text):
+                await self._send_audio(chunk)
             self._last_nudge = nudge.trigger_signal
 
             # Persist
