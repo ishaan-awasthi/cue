@@ -17,7 +17,7 @@ from typing import Callable, Awaitable
 
 import numpy as np
 import librosa
-from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents
+from deepgram import DeepgramClient, LiveTranscriptionEvents
 from deepgram.clients.live.v1 import LiveOptions
 
 from ..config import settings
@@ -60,10 +60,7 @@ class AudioPipeline:
         self._buffer_seconds: float = 0.0
 
         # Deepgram state
-        self._dg_client = DeepgramClient(
-            settings.DEEPGRAM_API_KEY,
-            DeepgramClientOptions(options={"keepalive": "true"}),
-        )
+        self._dg_client = DeepgramClient(settings.DEEPGRAM_API_KEY)
         self._connection = None
 
         # Rolling metrics from Deepgram
@@ -75,6 +72,7 @@ class AudioPipeline:
         # Emit loop task
         self._emit_task: asyncio.Task | None = None
         self._running = False
+        self._audio_chunks_received: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -82,14 +80,12 @@ class AudioPipeline:
 
     async def start(self) -> None:
         """Open Deepgram connection and start the emit loop."""
+        print(f"[audio] Starting AudioPipeline for session {self._session_id}")
         options = LiveOptions(
             model="nova-2",
             language="en-US",
             smart_format=True,
-            filler_words=True,
             interim_results=False,
-            utterance_end_ms="1000",
-            vad_events=True,
             encoding="linear16",
             sample_rate=SAMPLE_RATE,
             channels=1,
@@ -103,6 +99,7 @@ class AudioPipeline:
         if not self._connection.start(options):
             raise RuntimeError("Failed to start Deepgram live connection")
 
+        print(f"[audio] Deepgram connection established (nova-2, {SAMPLE_RATE} Hz)")
         self._running = True
         self._emit_task = asyncio.create_task(self._emit_loop())
 
@@ -110,6 +107,12 @@ class AudioPipeline:
         """Feed raw PCM bytes from the WebSocket into Deepgram and the librosa buffer."""
         if not self._running or self._connection is None:
             return
+
+        self._audio_chunks_received += 1
+        if self._audio_chunks_received == 1:
+            print(f"[audio] First audio chunk received ({len(pcm_bytes)} bytes) — Deepgram streaming started")
+        elif self._audio_chunks_received % 100 == 0:
+            print(f"[audio] {self._audio_chunks_received} audio chunks received so far ({self._buffer_seconds:.1f}s buffered)")
 
         # Forward to Deepgram
         self._connection.send(pcm_bytes)
@@ -150,10 +153,15 @@ class AudioPipeline:
             if not transcript:
                 return
 
+            print(f"[audio] Deepgram transcript: \"{transcript}\"")
+
             # Count filler words in this chunk
             words_lower = [w.word.lower() for w in alt.words]
             filler_count = sum(1 for w in words_lower if w in FILLER_WORDS)
             self._filler_count_window += filler_count
+            if filler_count > 0:
+                fillers_found = [w for w in words_lower if w in FILLER_WORDS]
+                print(f"[audio] Filler words detected: {fillers_found} (+{filler_count} this chunk, {self._filler_count_window} total in window)")
 
             # WPM from Deepgram metadata when available
             metadata = getattr(result, "metadata", None)
@@ -175,7 +183,8 @@ class AudioPipeline:
             pass  # never crash the Deepgram thread
 
     def _on_deepgram_error(self, *args, **kwargs) -> None:
-        pass  # log only — don't crash
+        error = kwargs.get("error") or (args[1] if len(args) > 1 else args)
+        print(f"[audio] Deepgram error: {error}")
 
     # ------------------------------------------------------------------
     # Emit loop
@@ -187,6 +196,13 @@ class AudioPipeline:
             if not self._running:
                 break
             signal = await self._build_signal()
+            print(
+                f"[audio] AudioSignal emitted — "
+                f"WPM={signal.words_per_minute}, "
+                f"fillers={signal.filler_word_count}, "
+                f"pitch_var={signal.pitch_variance}, "
+                f"volume_rms={signal.volume_rms}"
+            )
             await self._on_signal(signal)
 
             # Reset per-window counters
@@ -214,6 +230,7 @@ class AudioPipeline:
 
     def _librosa_analysis(self) -> tuple[float, float]:
         if not self._audio_buffer:
+            print("[audio] Librosa: no audio buffer yet — skipping analysis")
             return 0.0, 0.0
 
         # Concatenate all buffered chunks and trim to LIBROSA_WINDOW seconds
@@ -250,4 +267,5 @@ class AudioPipeline:
         except Exception:
             pitch_variance = 0.0
 
+        print(f"[audio] Librosa: pitch_variance={pitch_variance:.4f}, volume_rms={volume_rms:.4f} (from {len(audio)/SAMPLE_RATE:.1f}s audio)")
         return pitch_variance, volume_rms

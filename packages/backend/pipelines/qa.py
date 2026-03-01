@@ -77,6 +77,7 @@ class QAPipeline:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
+        print(f"[qa] Starting QAPipeline for session {self._session_id}")
         self._running = True
 
     async def on_transcript_chunk(self, chunk: str) -> None:
@@ -90,10 +91,13 @@ class QAPipeline:
 
         # Detect a question in this new chunk
         if self._is_question(chunk):
+            print(f"[qa] Question detected in chunk: \"{chunk}\"")
             async with self._lock:
                 # Don't interrupt an already-active Q&A
                 if self._active is None:
                     asyncio.create_task(self._handle_question(chunk))
+                else:
+                    print(f"[qa] Q&A already active — skipping new question")
 
     async def stop(self) -> None:
         self._running = False
@@ -125,20 +129,27 @@ class QAPipeline:
             }
 
         logger.info("Q&A: question detected: %r", question_text)
+        print(f"[qa] Handling question: \"{question_text}\"")
 
         # Fire RAG lookup immediately (non-blocking)
+        print(f"[qa] Firing RAG lookup for user {self._user_id}...")
         rag_task = asyncio.create_task(rag.answer_question(self._user_id, question_text))
 
         # Wait for RAG result
         try:
             rag_answer = await asyncio.wait_for(rag_task, timeout=30.0)
         except asyncio.TimeoutError:
+            print("[qa] RAG lookup timed out after 30s")
             rag_answer = ""
 
         if not rag_answer:
+            print("[qa] RAG returned no answer (no matching chunks or lookup failed) — skipping whisper")
             async with self._lock:
                 self._active = None
             return
+
+        print(f"[qa] RAG answer: \"{rag_answer[:200]}{'...' if len(rag_answer) > 200 else ''}\"")
+
 
         # Check speaker's response since question was asked
         async with self._lock:
@@ -149,6 +160,7 @@ class QAPipeline:
         speaker_response = self._get_speaker_delta(state["speaker_baseline"])
         elapsed = time.monotonic() - state["start_time"]
         word_count = len(speaker_response.split())
+        print(f"[qa] Speaker response: {word_count} words in {elapsed:.1f}s — \"{speaker_response[:100]}{'...' if len(speaker_response) > 100 else ''}\"")
 
         # Decide whether to whisper
         should_whisper = False
@@ -157,14 +169,21 @@ class QAPipeline:
         if word_count < MIN_SPEAKER_WORDS and elapsed >= settings.QA_SILENCE_TIMEOUT_SECONDS:
             should_whisper = True
             logger.info("Q&A: speaker silent/brief after timeout — whispering")
+            print(f"[qa] Speaker gave <{MIN_SPEAKER_WORDS} words after {elapsed:.1f}s — will whisper answer")
         elif rag_answer:
             try:
+                print(f"[qa] Computing cosine similarity between speaker response and RAG answer...")
                 similarity = await self._cosine_similarity(speaker_response, rag_answer)
+                print(f"[qa] Cosine similarity={similarity:.4f} (threshold: {settings.QA_MATCH_THRESHOLD})")
                 if similarity < settings.QA_MATCH_THRESHOLD:
                     should_whisper = True
                     logger.info("Q&A: low similarity %.3f — whispering", similarity)
+                    print(f"[qa] Low similarity — will whisper answer")
+                else:
+                    print(f"[qa] Speaker response matches RAG answer well — no whisper needed")
             except Exception as exc:
                 logger.error("Q&A similarity check failed: %s", exc)
+                print(f"[qa] Similarity check failed: {exc}")
                 should_whisper = word_count < MIN_SPEAKER_WORDS
 
         qa_event = QAEvent(
@@ -183,6 +202,7 @@ class QAPipeline:
                     await self._send_audio(chunk)
             except Exception as exc:
                 logger.error("Q&A TTS failed: %s", exc)
+                print(f"[qa] TTS failed: {exc}")
 
         # Persist Q&A event
         try:

@@ -37,11 +37,15 @@ fi
 BACKEND_HOST="${BACKEND_HOST:-localhost}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 echo "Connecting to backend at ws://$BACKEND_HOST:$BACKEND_PORT/ws/$SESSION_ID"
+echo "Webcam index:      ${WEBCAM_INDEX:-0 (default)}"
+echo "Audio input index: ${AUDIO_INPUT_INDEX:-(system default)}"
+echo "Audio output:      system default"
+echo "(run 'python3 -m packages.glasses.capture --list-devices' to see all devices)"
 echo ""
 
 cd "$REPO_ROOT"
 SESSION_ID="$SESSION_ID" \
-USER_ID="${USER_ID:-dev-user}" \
+USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000001}" \
 BACKEND_HOST="$BACKEND_HOST" \
 BACKEND_PORT="$BACKEND_PORT" \
 python3 -m packages.glasses.ws_client

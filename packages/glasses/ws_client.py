@@ -34,7 +34,7 @@ from .capture import AudioChunk, CaptureController, VideoFrame
 
 BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
 BACKEND_PORT = os.getenv("BACKEND_PORT", "8000")
-USER_ID = os.getenv("USER_ID", "dev-user")
+USER_ID = os.getenv("USER_ID", "00000000-0000-0000-0000-000000000001")
 SESSION_ID = os.getenv("SESSION_ID", "")
 
 WS_URI_TEMPLATE = "ws://{host}:{port}/ws/{session_id}?user_id={user_id}"
