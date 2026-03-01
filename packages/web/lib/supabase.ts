@@ -15,6 +15,14 @@ export const supabase = {
   from: (table: string) => getClient().from(table),
 } as SupabaseClient;
 
+/** Same user ID as API (X-User-Id). Use for all Supabase queries. */
+export function getCurrentUserId(): string {
+  if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_USER_ID) {
+    return process.env.NEXT_PUBLIC_USER_ID;
+  }
+  return "00000000-0000-0000-0000-000000000001";
+}
+
 // ---------------------------------------------------------------------------
 // Types (mirror backend db/models.py)
 // ---------------------------------------------------------------------------

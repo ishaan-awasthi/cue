@@ -3,11 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
-import { listFiles, type UploadedFile } from "../../lib/supabase";
-import { deleteFile } from "../../lib/api";
+import { listFiles, deleteFile, type UploadedFile } from "../../lib/api";
 import FileUploader from "../../components/FileUploader";
 
-const USER_ID = process.env.NEXT_PUBLIC_USER_ID ?? "00000000-0000-0000-0000-000000000001";
 
 export default function FilesPage() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -15,10 +13,10 @@ export default function FilesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
-    listFiles(USER_ID).then((f) => {
-      setFiles(f);
-      setLoading(false);
-    });
+    listFiles()
+      .then(setFiles)
+      .catch(() => setFiles([]))
+      .finally(() => setLoading(false));
   }, []);
 
   const handleUploaded = (file: UploadedFile) => {

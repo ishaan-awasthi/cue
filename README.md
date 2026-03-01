@@ -12,15 +12,24 @@ Cue is a real-time presentation coaching system using smart glasses. It helps sp
 
 4. **RAG Q&A system** — During live Q&A, when the system detects an audience question, it looks up relevant chunks from the user’s uploaded files (PDF, PPTX, DOCX, etc.) via embeddings and pgvector. If the speaker’s response is insufficient or too slow, the system whispers a short answer through the glasses so the speaker can deliver it naturally.
 
+## How the pieces connect
+
+- **Supabase** = hosted **database only** (Postgres + pgvector). It does **not** run or host your backend. You use the Supabase dashboard to view tables and run SQL; your backend uses `SUPABASE_URL` + `SUPABASE_KEY` to read/write data.
+- **Backend (FastAPI)** = a **separate process** you run on your machine (or deploy to a server). It listens on `http://localhost:8000` and talks to Supabase to store sessions, events, and files. The web dashboard and glasses rig call this API; they do not talk to Supabase directly for app logic.
+- So: **you must run the backend yourself.** It is not “inside” Supabase.
+
 ## Getting started
 
 1. Copy `.env.example` to `.env` and fill in the required API keys (Supabase, Deepgram, OpenAI; see comments in `.env.example`). Use the Supabase **Secret key** for `SUPABASE_KEY` (backend needs full DB access) and the **Publishable key** for `NEXT_PUBLIC_SUPABASE_KEY` in `packages/web/.env.local`.
 2. Run Supabase migrations and optionally seed data (see `supabase/`).
 3. Start each piece:
 
-   - **Backend:** `./scripts/start_backend.sh` (or `uvicorn` from `packages/backend`)
+   - **Backend** (required for the web app to create sessions, load data, and generate reports):
+     - From repo root: `./scripts/start_backend.sh`
+     - Or with Python: `python -m uvicorn packages.backend.main:app --host 0.0.0.0 --port 8000 --reload` (ensure `.env` is loaded).
+     - API: `http://localhost:8000`; docs: `http://localhost:8000/docs`
    - **Glasses rig:** `./scripts/start_rig.sh` (from a machine with webcam + mic, e.g. Mac with AirPods)
-   - **Web dashboard:** `cd packages/web && npm install && npm run dev`
+   - **Web dashboard:** `cd packages/web && npm install && npm run dev` (set `NEXT_PUBLIC_API_URL=http://localhost:8000` in `packages/web/.env.local`)
 
 Supabase is used in the cloud (not run via Docker here). The backend can be run in Docker with `docker-compose up`; see `docker-compose.yml`.
 

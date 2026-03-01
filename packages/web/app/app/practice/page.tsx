@@ -3,11 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
-import {
-  getSessions,
-  getSessionReport,
-  type Session,
-} from "../../../lib/api";
+import { listSessions, getCurrentUserId } from "../../../lib/supabase";
+import { getSessionReport } from "../../../lib/api";
+import type { Session } from "../../../lib/supabase";
 
 // Demo skills when no session/report data
 const DEMO_AREAS = [
@@ -85,7 +83,7 @@ export default function PracticePage() {
   const [showCorrect, setShowCorrect] = useState(false);
 
   useEffect(() => {
-    getSessions()
+    listSessions(getCurrentUserId())
       .then((data) => setSessions(data ?? []))
       .catch(() => setSessions([]))
       .finally(() => setLoading(false));

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { format, formatDuration, intervalToDuration } from "date-fns";
-import { getSession, getSessionEvents, type Session, type SessionEvent } from "../../../lib/supabase";
+import { getSession, getSessionEvents, type Session, type SessionEvent } from "../../../lib/api";
 import TranscriptPlayer from "../../../components/TranscriptPlayer";
 import NudgeTimeline from "../../../components/NudgeTimeline";
 import MetricsChart, { type MetricDataPoint } from "../../../components/MetricsChart";
@@ -42,8 +42,8 @@ export default function SessionDetailPage() {
           getSession(sessionId),
           getSessionEvents(sessionId),
         ]);
-        setSession(s);
-        setEvents(evs);
+        setSession(s ?? null);
+        setEvents(Array.isArray(evs) ? evs : []);
       } finally {
         setLoading(false);
       }
