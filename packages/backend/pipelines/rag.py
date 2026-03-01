@@ -53,9 +53,9 @@ def _get_openai() -> AsyncOpenAI:
 
 async def embed_text(text: str) -> list[float]:
     """Return a 1536-dim embedding for *text* using OpenAI."""
-    print(f"[rag] Embedding text ({len(text)} chars) via {EMBEDDING_MODEL}...")
+    # print(f"[rag] Embedding text ({len(text)} chars) via {EMBEDDING_MODEL}...")
     resp = await _get_openai().embeddings.create(model=EMBEDDING_MODEL, input=text)
-    print(f"[rag] Embedding complete ({EMBEDDING_DIM} dims)")
+    # print(f"[rag] Embedding complete ({EMBEDDING_DIM} dims)")
     return resp.data[0].embedding
 
 
@@ -71,16 +71,16 @@ async def ingest_file(
     content: bytes,
 ) -> int:
     """Extract, chunk, embed, and store the file. Returns chunk count."""
-    print(f"[rag] Ingesting file: {filename} ({len(content)} bytes, type={file_type})")
+    # print(f"[rag] Ingesting file: {filename} ({len(content)} bytes, type={file_type})")
     text = _extract_text(filename, file_type, content)
     if not text.strip():
-        print(f"[rag] No text extracted from {filename}")
+        # print(f"[rag] No text extracted from {filename}")
         return 0
 
     chunks = _chunk_text(text)
-    print(f"[rag] Split into {len(chunks)} chunks (~{CHUNK_TOKENS} tokens each)")
+    # print(f"[rag] Split into {len(chunks)} chunks (~{CHUNK_TOKENS} tokens each)")
     for idx, chunk in enumerate(chunks):
-        print(f"[rag] Embedding chunk {idx + 1}/{len(chunks)}...")
+        # print(f"[rag] Embedding chunk {idx + 1}/{len(chunks)}...")
         embedding = await embed_text(chunk)
         queries.insert_chunk(
             file_id=file_id,
@@ -93,7 +93,7 @@ async def ingest_file(
     # chunk_count is maintained by increment_chunk_count() called inside insert_chunk()
 
     logger.info("Ingested %d chunks for file %s", len(chunks), filename)
-    print(f"[rag] Ingestion complete: {len(chunks)} chunks stored for {filename}")
+    # print(f"[rag] Ingestion complete: {len(chunks)} chunks stored for {filename}")
     return len(chunks)
 
 
@@ -167,17 +167,15 @@ def _chunk_text(text: str) -> list[str]:
 async def answer_question(user_id: str, question: str) -> str:
     """Embed question, retrieve top-3 chunks, generate a whisper-ready answer."""
     try:
-        print(f"[rag] answer_question: \"{question}\" for user {user_id}")
+        # print(f"[rag] answer_question: \"{question}\" for user {user_id}")
         query_embedding = await embed_text(question)
         chunks: list[DocumentChunk] = await _retrieve_chunks(user_id, query_embedding)
 
         if not chunks:
-            print(f"[rag] No matching chunks found — no answer generated")
+            # print(f"[rag] No matching chunks found — no answer generated")
             return ""
 
-        print(f"[rag] Retrieved {len(chunks)} chunk(s) from pgvector")
-        for i, c in enumerate(chunks):
-            print(f"[rag]   chunk {i+1}: \"{c.chunk_text[:80]}{'...' if len(c.chunk_text) > 80 else ''}\"")
+        # print(f"[rag] Retrieved {len(chunks)} chunk(s) from pgvector")
 
         context = "\n\n---\n\n".join(c.chunk_text for c in chunks)
         prompt = (
@@ -190,18 +188,18 @@ async def answer_question(user_id: str, question: str) -> str:
             f"Answer:"
         )
 
-        print(f"[rag] Calling {QA_MODEL} for answer generation...")
+        # print(f"[rag] Calling {QA_MODEL} for answer generation...")
         resp = await _get_openai().chat.completions.create(
             model=QA_MODEL,
             max_tokens=150,
             messages=[{"role": "user", "content": prompt}],
         )
         answer = (resp.choices[0].message.content or "").strip()
-        print(f"[rag] Generated answer: \"{answer}\"")
+        # print(f"[rag] Generated answer: \"{answer}\"")
         return answer
     except Exception as exc:
         logger.error("RAG answer_question failed: %s", exc)
-        print(f"[rag] ERROR in answer_question: {exc}")
+        # print(f"[rag] ERROR in answer_question: {exc}")
         return ""
 
 
