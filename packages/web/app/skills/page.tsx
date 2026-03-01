@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { getMetrics } from "../../lib/supabase";
+import { getMetrics, getCurrentUserId } from "../../lib/supabase";
 import MetricsChart, { type MetricDataPoint } from "../../components/MetricsChart";
-
-const USER_ID = process.env.NEXT_PUBLIC_USER_ID ?? "00000000-0000-0000-0000-000000000001";
 
 const METRIC_CONFIG: Array<{
   key: string;
@@ -12,15 +10,15 @@ const METRIC_CONFIG: Array<{
   yMin?: number;
   yMax?: number;
 }> = [
-  { key: "avg_wpm",           label: "Speaking Pace (WPM)",    color: "#00d4aa", unit: " wpm",   yMin: 0 },
-  { key: "total_fillers",     label: "Filler Words per Session", color: "#00d4aa", unit: "",       yMin: 0 },
-  { key: "avg_pitch_variance",label: "Pitch Variance",          color: "#00d4aa", unit: "",       yMin: 0 },
-  { key: "avg_volume_rms",    label: "Volume (RMS)",            color: "#00d4aa", unit: "",       yMin: 0 },
-  { key: "overall_score",     label: "Overall Score",           color: "#00d4aa", unit: "",       yMin: 0, yMax: 100 },
+  { key: "avg_wpm",           label: "Speaking Pace (WPM)",    color: "#008b73", unit: " wpm",   yMin: 0 },
+  { key: "total_fillers",     label: "Filler Words per Session", color: "#008b73", unit: "",       yMin: 0 },
+  { key: "avg_pitch_variance",label: "Pitch Variance",          color: "#008b73", unit: "",       yMin: 0 },
+  { key: "avg_volume_rms",    label: "Volume (RMS)",            color: "#008b73", unit: "",       yMin: 0 },
+  { key: "overall_score",     label: "Overall Score",           color: "#008b73", unit: "",       yMin: 0, yMax: 100 },
 ];
 
 export default async function SkillsPage() {
-  const allMetrics = await getMetrics(USER_ID);
+  const allMetrics = await getMetrics(getCurrentUserId());
 
   // Group by metric_name → series of (recorded_at, value)
   const seriesMap: Record<string, MetricDataPoint[]> = {};

@@ -1,10 +1,22 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { format } from "date-fns";
-import { getSession, type Session } from "../../../../lib/supabase";
+import {
+  getSession,
+  getSessionEvents,
+  getSessionReport,
+  sendChatMessage,
+  type Session,
+  type CoachingReport,
+  type ChatMessage,
+  type SessionEvent,
+} from "../../../../lib/api";
+import FileUploader from "../../../../components/FileUploader";
+import MetricsChart from "../../../../components/MetricsChart";
+import type { UploadedFile } from "../../../../lib/supabase";
 
 function mockSession(id: string): Session {
   return {
@@ -17,15 +29,6 @@ function mockSession(id: string): Session {
     summary: null,
   };
 }
-import {
-  getSessionReport,
-  sendChatMessage,
-  type CoachingReport,
-  type ChatMessage,
-} from "../../../../lib/api";
-import FileUploader from "../../../../components/FileUploader";
-import MetricsChart from "../../../../components/MetricsChart";
-import type { UploadedFile } from "../../../../lib/supabase";
 
 type Phase = "prep" | "in_progress" | "ratings";
 type InProgressTab = "chat" | "metrics";
@@ -57,6 +60,39 @@ function getDemoMetrics(sessionStartedAt: string) {
   };
 }
 
+/** Build chart-ready series from backend session events (audio_signal, audience_signal). */
+function deriveMetricsFromEvents(events: SessionEvent[]): {
+  retention: { timestamp: string; value: number }[];
+  wpm: { timestamp: string; value: number }[];
+  fillerRate: { timestamp: string; value: number }[];
+  flags: string[];
+} {
+  const audio = events.filter((e) => e.event_type === "audio_signal");
+  const audience = events.filter((e) => e.event_type === "audience_signal");
+  const nudges = events.filter((e) => e.event_type === "nudge");
+
+  const retention = audience.map((e) => ({
+    timestamp: typeof e.timestamp === "string" ? e.timestamp : new Date(e.timestamp).toISOString(),
+    value: Math.round((Number((e.payload as Record<string, unknown>)?.attention_score ?? 0)) * 100),
+  }));
+
+  const wpm = audio.map((e) => ({
+    timestamp: typeof e.timestamp === "string" ? e.timestamp : new Date(e.timestamp).toISOString(),
+    value: Number((e.payload as Record<string, unknown>)?.words_per_minute ?? 0),
+  }));
+
+  const fillerRate = audio.map((e) => ({
+    timestamp: typeof e.timestamp === "string" ? e.timestamp : new Date(e.timestamp).toISOString(),
+    value: Number((e.payload as Record<string, unknown>)?.filler_word_count ?? 0) * 12, // per 5s → per min approx
+  }));
+
+  const flags = nudges.map(
+    (e) => (e.payload as Record<string, unknown>)?.text as string
+  ).filter(Boolean);
+
+  return { retention, wpm, fillerRate, flags };
+}
+
 
 
 export default function SessionDetailPage() {
@@ -79,6 +115,7 @@ export default function SessionDetailPage() {
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [inProgressTab, setInProgressTab] = useState<InProgressTab>("chat");
+  const [events, setEvents] = useState<SessionEvent[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -86,9 +123,12 @@ export default function SessionDetailPage() {
       .then((s) => {
         setSession(s ?? mockSession(sessionId));
         if (s?.ended_at) setPhase("ratings");
+        return s?.id ? getSessionEvents(sessionId) : [];
       })
+      .then((evts) => setEvents(evts))
       .catch(() => {
         setSession(mockSession(sessionId));
+        setEvents([]);
       })
       .finally(() => setLoading(false));
   }, [sessionId]);
@@ -106,6 +146,11 @@ export default function SessionDetailPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  const derivedMetrics = useMemo(
+    () => (events.length > 0 ? deriveMetricsFromEvents(events) : null),
+    [events]
+  );
 
   const handleUploaded = (_file: UploadedFile) => {
     // Optional: keep context file IDs in state for display
@@ -296,14 +341,16 @@ export default function SessionDetailPage() {
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="2.5"
-                        strokeDasharray={`${DEMO_OVERALL_SCORE} ${100 - DEMO_OVERALL_SCORE}`}
+                        strokeDasharray={`${session?.overall_score ?? DEMO_OVERALL_SCORE} ${100 - (session?.overall_score ?? DEMO_OVERALL_SCORE)}`}
                         strokeLinecap="round"
                         className="text-aqua transition-all duration-700"
                       />
                     </svg>
                     <div className="absolute inset-0 flex items-center justify-center">
                       <span className="text-2xl font-bold text-white">
-                        {DEMO_OVERALL_SCORE}
+                        {session?.overall_score != null
+                          ? Math.round(session.overall_score)
+                          : DEMO_OVERALL_SCORE}
                       </span>
                     </div>
                   </div>
@@ -364,28 +411,29 @@ export default function SessionDetailPage() {
 
             {inProgressTab === "metrics" && (
               <div className="space-y-6">
-                {/* Flags */}
-                <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
-                  <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
-                    Flags
-                  </h2>
-                  <ul className="space-y-2">
-                    {DEMO_FLAGS.map((item, i) => (
-                      <li
-                        key={i}
-                        className="text-sm text-gray-300 flex gap-2"
-                      >
-                        <span className="text-aqua shrink-0">•</span>
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
+                {/* Flags — from backend nudges when available */}
+                {(derivedMetrics?.flags.length ?? DEMO_FLAGS.length) > 0 && (
+                  <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
+                    <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
+                      Flags
+                    </h2>
+                    <ul className="space-y-2">
+                      {(derivedMetrics?.flags ?? DEMO_FLAGS).map((item, i) => (
+                        <li key={i} className="text-sm text-gray-300 flex gap-2">
+                          <span className="text-aqua shrink-0">•</span>
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
 
-                {/* Speech retention */}
+                {/* Speech retention — from backend audience_signal when available */}
                 <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
                   <MetricsChart
-                    data={getDemoMetrics(session.started_at).retention}
+                    data={
+                      derivedMetrics?.retention ?? getDemoMetrics(session.started_at).retention
+                    }
                     label="Speech retention (audience attention %)"
                     yMin={0}
                     yMax={100}
@@ -393,24 +441,28 @@ export default function SessionDetailPage() {
                   />
                 </section>
 
-                {/* Average speed (WPM) */}
+                {/* Average speed (WPM) — from backend audio_signal when available */}
                 <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
                   <MetricsChart
-                    data={getDemoMetrics(session.started_at).wpm}
+                    data={
+                      derivedMetrics?.wpm ?? getDemoMetrics(session.started_at).wpm
+                    }
                     label="Average speed (WPM)"
-                    yMin={100}
-                    yMax={160}
+                    yMin={80}
+                    yMax={180}
                     unit=" wpm"
                   />
                 </section>
 
-                {/* Filler words */}
+                {/* Filler words — from backend audio_signal when available */}
                 <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
                   <MetricsChart
-                    data={getDemoMetrics(session.started_at).fillerRate}
+                    data={
+                      derivedMetrics?.fillerRate ?? getDemoMetrics(session.started_at).fillerRate
+                    }
                     label="Filler words (per min)"
                     yMin={0}
-                    yMax={4}
+                    yMax={8}
                     unit="/min"
                   />
                 </section>
