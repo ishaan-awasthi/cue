@@ -1,0 +1,3 @@
+# fastapi, uvicorn, supabase, deepgram-sdk, librosa, pyaudio, mediapipe, openai, anthropic, elevenlabs,
+# numpy, pydantic, pydantic-settings, python-dotenv, websockets, torch, transformers, torchaudio,
+# pypdf, python-pptx, python-docx, markdown, tiktoken (for chunking text into ~500 token chunks)

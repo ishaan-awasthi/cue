@@ -1,0 +1,9 @@
+-- Core schema. Tables:
+--
+-- users: id (uuid PK), email (text), created_at (timestamptz)
+-- sessions: id (uuid PK), user_id (uuid FK→users), started_at, ended_at, duration_seconds (int), overall_score (float), summary (jsonb)
+-- session_events: id (uuid PK), session_id (uuid FK→sessions), timestamp (timestamptz), event_type (text — audio_signal | audience_signal | nudge | qa_event), payload (jsonb). Append-only, never update or delete.
+-- metrics: id (uuid PK), user_id (uuid FK→users), session_id (uuid FK→sessions), metric_name (text), value (float), recorded_at (timestamptz)
+-- uploaded_files: id (uuid PK), user_id (uuid FK→users), filename (text), file_type (text), uploaded_at (timestamptz), chunk_count (int)
+--
+-- Add indexes on session_events(session_id), metrics(user_id, metric_name), uploaded_files(user_id).

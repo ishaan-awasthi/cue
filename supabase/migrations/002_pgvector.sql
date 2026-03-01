@@ -1,0 +1,7 @@
+-- Enables the pgvector extension and creates the document_chunks table:
+--
+-- document_chunks: id (uuid PK), file_id (uuid FK→uploaded_files), user_id (uuid FK→users), chunk_text (text),
+--   chunk_index (int), embedding (vector(1536)) — 1536 dimensions matches OpenAI text-embedding-3-small output
+--
+-- Create an HNSW index on document_chunks(embedding) using vector_cosine_ops for fast similarity search.
+-- Note: pgvector must be enabled in the Supabase dashboard under Database → Extensions before running this migration.

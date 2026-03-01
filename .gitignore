@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+.next/
+packages/backend/models/*.bin
+packages/backend/models/*.pt
+packages/backend/models/*.safetensors

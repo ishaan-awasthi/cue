@@ -1,0 +1,14 @@
+{
+  "_comment": "Dependencies: next, react, react-dom, @supabase/supabase-js, recharts, tailwindcss, typescript and type packages.",
+  "name": "cue-web",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

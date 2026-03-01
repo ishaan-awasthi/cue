@@ -1,0 +1,9 @@
+# This file defines one service: the FastAPI backend.
+# Supabase is hosted in the cloud — it is not run locally via this compose file.
+# pgvector is enabled via the Supabase dashboard (Database → Extensions), not here.
+#
+# services:
+#   backend:
+#     build: ./packages/backend
+#     ports: ["8000:8000"]
+#     env_file: .env

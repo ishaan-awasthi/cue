@@ -1,0 +1,4 @@
+-- Inserts fake dev data: one test user, two sessions with realistic durations and scores, session_events
+-- with varied payloads (audio signals, audience signals, nudges, and one QA event where a whisper was
+-- delivered), corresponding metrics rows, one uploaded_file with realistic chunk_count, and several
+-- document_chunks with zeroed-out embeddings (placeholder vectors for dev).
