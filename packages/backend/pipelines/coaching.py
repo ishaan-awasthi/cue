@@ -71,12 +71,18 @@ class CoachingPipeline:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
+        print(f"[coaching] Starting CoachingPipeline for session {self._session_id} (nudge interval: {settings.NUDGE_INTERVAL_SECONDS}s)")
         self._running = True
         self._nudge_task = asyncio.create_task(self._nudge_loop())
 
     async def on_audio_signal(self, signal: AudioSignal) -> None:
         self._audio_signals.append(signal)
         self._trim_window()
+        print(
+            f"[coaching] Audio signal received — WPM={signal.words_per_minute}, "
+            f"fillers={signal.filler_word_count}, pitch_var={signal.pitch_variance:.4f}, "
+            f"volume={signal.volume_rms:.4f} | window size: {len(self._audio_signals)}"
+        )
         # Persist the signal as a session event
         await asyncio.to_thread(
             queries.insert_event,
@@ -88,6 +94,11 @@ class CoachingPipeline:
     async def on_audience_signal(self, signal: AudienceSignal) -> None:
         self._audience_signals.append(signal)
         self._trim_window()
+        print(
+            f"[coaching] Audience signal received — attention={signal.attention_score:.3f}, "
+            f"faces={signal.faces_detected}, looking_away_pct={signal.looking_away_pct:.3f} "
+            f"| window size: {len(self._audience_signals)}"
+        )
         await asyncio.to_thread(
             queries.insert_event,
             self._session_id,
@@ -128,9 +139,13 @@ class CoachingPipeline:
             await asyncio.sleep(settings.NUDGE_INTERVAL_SECONDS)
             if not self._running:
                 break
+            print(f"[coaching] Evaluating nudge rules ({len(self._audio_signals)} audio, {len(self._audience_signals)} audience signals in window)...")
             nudge = self._evaluate()
             if nudge:
+                print(f"[coaching] Nudge triggered! trigger={nudge.trigger_signal} value={nudge.trigger_value} — \"{nudge.text}\"")
                 await self._fire_nudge(nudge)
+            else:
+                print("[coaching] No nudge needed — all thresholds within range")
 
     def _evaluate(self) -> Nudge | None:
         """Evaluate all rules against current window averages. Returns the highest
@@ -151,6 +166,12 @@ class CoachingPipeline:
             )
             avg_volume = sum(s.volume_rms for s in audio_list) / len(audio_list)
             avg_pitch_var = sum(s.pitch_variance for s in audio_list) / len(audio_list)
+            print(
+                f"[coaching] Window averages — WPM={avg_wpm:.1f} (ok: {MIN_WPM}-{MAX_WPM}), "
+                f"filler_rate={avg_filler_rate:.2f}/min (threshold: {settings.FILLER_WORD_RATE_THRESHOLD}), "
+                f"volume={avg_volume:.4f} (threshold: {VOLUME_THRESHOLD}), "
+                f"pitch_var={avg_pitch_var:.2f} (threshold: {PITCH_VARIANCE_THRESHOLD})"
+            )
 
             if avg_filler_rate > settings.FILLER_WORD_RATE_THRESHOLD:
                 return self._make_nudge(
@@ -190,6 +211,7 @@ class CoachingPipeline:
         # ----- Audience-based rules -----
         if audience_list:
             avg_attention = sum(s.attention_score for s in audience_list) / len(audience_list)
+            print(f"[coaching] Avg attention={avg_attention:.3f} (threshold: {settings.ATTENTION_THRESHOLD})")
             if avg_attention < settings.ATTENTION_THRESHOLD:
                 return self._make_nudge(
                     "Re-engage the room — you're losing them.",
@@ -212,7 +234,9 @@ class CoachingPipeline:
 
     async def _fire_nudge(self, nudge: Nudge) -> None:
         try:
+            print(f"[coaching] Synthesising nudge audio via TTS...")
             audio_bytes = await synthesize(nudge.text)
+            print(f"[coaching] TTS returned {len(audio_bytes)} bytes — sending to glasses rig")
             await self._send_audio(audio_bytes)
             self._last_nudge = nudge.trigger_signal
 
@@ -224,5 +248,7 @@ class CoachingPipeline:
                 nudge.model_dump(mode="json"),
             )
             logger.info("Nudge fired: %s (%.3f)", nudge.trigger_signal, nudge.trigger_value)
+            print(f"[coaching] Nudge persisted to DB")
         except Exception as exc:
             logger.error("Failed to fire nudge: %s", exc)
+            print(f"[coaching] ERROR firing nudge: {exc}")

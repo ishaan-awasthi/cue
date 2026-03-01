@@ -9,6 +9,7 @@ _SPEAK_URL = "https://api.deepgram.com/v1/speak"
 
 async def synthesize(text: str) -> bytes:
     """Convert *text* to speech and return raw linear16 PCM bytes at 24 kHz mono."""
+    print(f"[tts] Synthesising: \"{text[:100]}{'...' if len(text) > 100 else ''}\" (model={settings.DEEPGRAM_TTS_MODEL})")
     params = {
         "model": settings.DEEPGRAM_TTS_MODEL,
         "encoding": "linear16",
@@ -33,4 +34,6 @@ async def synthesize(text: str) -> bytes:
             async for chunk in resp.aiter_bytes():
                 if chunk:
                     chunks.append(chunk)
-            return b"".join(chunks)
+            result = b"".join(chunks)
+            print(f"[tts] Synthesised {len(result)} bytes ({len(result) / 48000:.2f}s of audio at 24kHz)")
+            return result

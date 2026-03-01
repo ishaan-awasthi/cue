@@ -249,6 +249,7 @@ async def list_files(user_id: str = Depends(get_user_id)):
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
+    print(f"[ws] WebSocket accepted for session {session_id}")
 
     # Resolve user_id from query param (WebSocket can't use headers reliably
     # from all clients)
@@ -256,6 +257,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     if not user_id:
         await websocket.close(code=4001, reason="user_id query param required")
         return
+
+    print(f"[ws] User {user_id} connected to session {session_id}")
 
     # Callback: send bytes back to the glasses rig
     async def send_audio(audio_bytes: bytes) -> None:
@@ -292,12 +295,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         await coaching.start()
         await qa.start()
         logger.info("Pipelines started for session %s", session_id)
+        print(f"[ws] All pipelines started for session {session_id} (user={user_id})")
+
+        audio_msg_count = 0
+        frame_msg_count = 0
 
         while True:
             message = await websocket.receive()
 
             if "bytes" in message:
                 # Raw PCM audio bytes
+                audio_msg_count += 1
+                if audio_msg_count == 1:
+                    print(f"[ws] First audio bytes received ({len(message['bytes'])} bytes)")
                 await audio_pipeline.push_audio(message["bytes"])
 
             elif "text" in message:
@@ -305,14 +315,21 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 try:
                     msg = json.loads(message["text"])
                     if msg.get("type") == "frame":
+                        frame_msg_count += 1
+                        if frame_msg_count == 1:
+                            print(f"[ws] First video frame received")
+                        elif frame_msg_count % 100 == 0:
+                            print(f"[ws] {frame_msg_count} frames received so far ({audio_msg_count} audio chunks)")
                         await vision.push_frame(msg["data"])
                 except (json.JSONDecodeError, KeyError):
                     pass
 
     except WebSocketDisconnect:
         logger.info("Client disconnected from session %s", session_id)
+        print(f"[ws] Client disconnected — session {session_id} ended ({audio_msg_count} audio chunks, {frame_msg_count} frames received)")
     except Exception as exc:
         logger.error("WebSocket error for session %s: %s", session_id, exc)
+        print(f"[ws] ERROR in session {session_id}: {exc}")
     finally:
         # Snapshot signal history BEFORE stopping (stop() may clear state)
         audio_signals = list(coaching._audio_signals)

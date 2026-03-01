@@ -21,10 +21,10 @@ if [ ! -d "$REPO_ROOT/packages/backend/$FLUENCY_PATH" ] && [ ! -d "$FLUENCY_PATH
 fi
 
 echo "Starting Cue backend on http://0.0.0.0:8000"
-echo "WebSocket URL for glasses rig: ws://$(hostname -I | awk '{print $1}'):8000/ws/<session_id>"
+echo "WebSocket URL for glasses rig: ws://$(ipconfig getifaddr en0 2>/dev/null || hostname):8000/ws/<session_id>"
 echo ""
 
-cd "$REPO_ROOT/packages/backend"
+cd "$REPO_ROOT"
 python -m uvicorn packages.backend.main:app \
   --host 0.0.0.0 \
   --port 8000 \
