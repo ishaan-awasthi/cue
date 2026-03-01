@@ -3,58 +3,44 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { format } from "date-fns";
-
-const STORAGE_KEY = "cue_local_sessions";
-
-interface LocalSession {
-  id: string;
-  started_at: string;
-  ended_at: string | null;
-  overall_score: number | null;
-}
-
-function loadLocalSessions(): LocalSession[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalSessions(sessions: LocalSession[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-  } catch {}
-}
+import { getSessions, createSession, type Session } from "../../lib/api";
 
 export default function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
-  const [sessions, setSessions] = useState<LocalSession[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSessions(loadLocalSessions());
+    getSessions()
+      .then(setSessions)
+      .catch(() => setSessions([]))
+      .finally(() => setLoading(false));
   }, []);
 
-  const handleNewSession = () => {
+  const handleNewSession = async () => {
+    setCreateError(null);
     setCreating(true);
-    const session: LocalSession = {
-      id: crypto.randomUUID(),
-      started_at: new Date().toISOString(),
-      ended_at: null,
-      overall_score: null,
-    };
-    const next = [session, ...sessions];
-    setSessions(next);
-    saveLocalSessions(next);
-    setCreating(false);
-    router.push(`/app/sessions/${session.id}`);
+    try {
+      const session = await createSession();
+      setSessions((prev) => [session, ...prev]);
+      router.push(`/app/sessions/${session.id}`);
+    } catch (err) {
+      let message = err instanceof Error ? err.message : "Could not create session";
+      if (message === "Failed to fetch" || (err instanceof TypeError && err.message.includes("fetch"))) {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+        message = `Backend unreachable at ${apiUrl}. Is it running?`;
+      }
+      setCreateError(message);
+      console.error("Create session failed:", err);
+      // Still open prep view (upload + chat) so the user can use the UI; actions will show errors until backend is up
+      const fallbackId = crypto.randomUUID();
+      router.push(`/app/sessions/${fallbackId}`);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const sessionIdFromPath = pathname?.startsWith("/app/sessions/")
@@ -71,7 +57,15 @@ export default function AppSidebar() {
         {creating ? "Creating…" : "New session"}
       </button>
 
-      {sessions.length === 0 ? (
+      {createError && (
+        <p className="text-xs text-red-400 px-1 py-1" role="alert">
+          {createError}
+        </p>
+      )}
+
+      {loading ? (
+        <p className="text-xs text-gray-500 py-2">Loading…</p>
+      ) : sessions.length === 0 ? (
         <p className="text-xs text-gray-500 py-2">No sessions yet</p>
       ) : (
         <ul className="space-y-0.5">
