@@ -91,7 +91,6 @@ export default function SessionDetailPage() {
                   letterSpacing: "0.08em",
                   textTransform: "uppercase",
                   transition: "color 0.15s",
-                  borderBottom: activeTab === tab ? "2px solid var(--aqua)" : "2px solid transparent",
                   color: activeTab === tab ? "var(--aqua)" : "rgba(240,245,243,0.4)",
                   background: "none",
                   border: "none",
