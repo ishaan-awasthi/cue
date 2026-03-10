@@ -427,6 +427,113 @@ def _compute_overall_score(metrics: dict[str, float]) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Practice drill analysis
+# ---------------------------------------------------------------------------
+
+class PracticeAnalyzeRequest(BaseModel):
+    transcript: str
+    words_per_minute: float = 0.0
+    filler_word_count: int = 0
+    duration_seconds: float = 0.0
+
+
+class PracticeNudge(BaseModel):
+    trigger: str
+    text: str
+    value: float
+
+
+class PracticeAnalyzeResponse(BaseModel):
+    score: float                        # 0–100
+    nudges: list[PracticeNudge]
+    filler_words_found: list[str]
+    wpm: float
+
+
+PRACTICE_FILLER_UNIGRAMS = {"uh", "um", "hmm", "er", "erm", "like", "so", "basically", "literally", "actually"}
+PRACTICE_FILLER_BIGRAMS = ["you know", "i mean", "kind of", "sort of", "you see"]
+
+
+def _count_fillers(transcript: str) -> tuple[int, list[str]]:
+    """Return (count, unique_found) using the same bigram+unigram logic as the frontend."""
+    import re
+    text = transcript.lower()
+    found: list[str] = []
+
+    for bigram in PRACTICE_FILLER_BIGRAMS:
+        pattern = re.compile(r"\b" + re.escape(bigram) + r"\b")
+        matches = pattern.findall(text)
+        if matches:
+            found.extend(matches)
+            text = pattern.sub(" _ ", text)
+
+    for word in re.split(r"\s+", text):
+        clean = re.sub(r"[^a-z]", "", word)
+        if clean in PRACTICE_FILLER_UNIGRAMS:
+            found.append(clean)
+
+    unique = list(dict.fromkeys(found))
+    return len(found), unique
+
+
+@app.post("/practice/analyze", response_model=PracticeAnalyzeResponse)
+async def practice_analyze(body: PracticeAnalyzeRequest):
+    """Analyse a short practice drill using the same rules as coaching.py."""
+    transcript = body.transcript.strip()
+    wpm = body.words_per_minute
+    filler_count = body.filler_word_count
+    duration_min = max(body.duration_seconds / 60.0, 0.05)
+
+    # Always recount from transcript so client and backend agree
+    backend_filler_count, found_fillers = _count_fillers(transcript)
+    if filler_count == 0:
+        filler_count = backend_filler_count
+
+    filler_rate_per_min = filler_count / duration_min
+
+    nudges: list[PracticeNudge] = []
+
+    if filler_rate_per_min > 3.0:
+        nudges.append(PracticeNudge(
+            trigger="filler_word_rate",
+            text="Try to cut the filler words — your audience notices more than you think.",
+            value=round(filler_rate_per_min, 2),
+        ))
+
+    if wpm > 0:
+        if wpm < 100:
+            nudges.append(PracticeNudge(
+                trigger="words_per_minute",
+                text="Pick up the pace a little — you've got the room.",
+                value=round(wpm, 1),
+            ))
+        elif wpm > 180:
+            nudges.append(PracticeNudge(
+                trigger="words_per_minute",
+                text="Slow down — let the ideas land.",
+                value=round(wpm, 1),
+            ))
+
+    score = 80.0
+    if 110 <= wpm <= 160:
+        score += 10
+    elif wpm > 0 and (wpm < 80 or wpm > 200):
+        score -= 15
+    if filler_rate_per_min < 1:
+        score += 10
+    elif filler_rate_per_min > 5:
+        score -= 15
+    score = max(0.0, min(100.0, round(score, 1)))
+
+    return PracticeAnalyzeResponse(
+        score=score,
+        nudges=nudges,
+        filler_words_found=list(dict.fromkeys(found_fillers)),
+        wpm=round(wpm, 1),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
 
