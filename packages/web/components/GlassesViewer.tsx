@@ -16,7 +16,7 @@ function Model() {
     const box = new THREE.Box3().setFromObject(ref.current);
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    const scale = 2.7 / maxDim;
+    const scale = 4.2 / maxDim;
     ref.current.scale.setScalar(scale);
     const center = box.getCenter(new THREE.Vector3());
     ref.current.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
@@ -46,11 +46,10 @@ function Model() {
     if (!state.done) {
       state.t = Math.min(1, state.t + delta * 0.8);
       const ease = 1 - Math.pow(1 - state.t, 3);
-      ref.current.position.y = (-2 + 2 * ease) + ref.current.position.y * 0;
+      ref.current.position.y = -2 + 2 * ease;
       ref.current.rotation.x = Math.PI * 0.5 * (1 - ease) + (0.22 * ease);
       if (state.t >= 1) {
         state.done = true;
-        ref.current.rotation.x = 0.22;
       }
     } else {
       ref.current.rotation.x = 0.22;
@@ -71,7 +70,7 @@ export default function GlassesViewer({ ready }: Props) {
     <div style={{ width: "100%", height: "100%" }}>
       {ready && (
         <Canvas
-          camera={{ position: [0, 0, 5.5], fov: 45 }}
+          camera={{ position: [0, 1.1, 5.5], fov: 45 }}
           gl={{ antialias: true, alpha: true }}
           style={{ width: "100%", height: "100%", background: "transparent" }}
         >

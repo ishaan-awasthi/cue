@@ -1,6 +1,12 @@
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
+import { Manrope } from "next/font/google";
 import "./globals.css";
+
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-manrope",
+});
 
 export const metadata: Metadata = {
   title: "Cue — Presentation Coach",
@@ -9,7 +15,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`bg-bg ${GeistSans.className}`}>
+    <html lang="en" className={`bg-bg ${GeistSans.className} ${manrope.variable}`}>
       <body className="min-h-screen bg-bg text-fg antialiased">{children}</body>
     </html>
   );
