@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Cue Backend", version="0.1.0")
 
+# Registry of active WebSocket per session_id. When the web app calls POST /sessions/{id}/end,
+# we close this WebSocket so the backend stops processing audio/vision and the client disconnects.
+_active_session_websockets: dict[str, WebSocket] = {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -94,6 +98,23 @@ async def get_session_events(session_id: str, user_id: str = Depends(get_user_id
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
     return await asyncio_to_thread(queries.get_session_events, session_id)
+
+
+@app.post("/sessions/{session_id}/end", status_code=204)
+async def end_session_ws(session_id: str, user_id: str = Depends(get_user_id)):
+    """Called when the user clicks 'End conversation' in the web app. Closes the
+    WebSocket for this session so the backend stops processing audio/vision and
+    the client (browser or glasses) disconnects. Cleanup runs in the WS handler's finally."""
+    session = await asyncio_to_thread(queries.get_session, session_id)
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    ws = _active_session_websockets.pop(session_id, None)
+    if ws is not None:
+        try:
+            await ws.close(code=1000, reason="Session ended from dashboard")
+        except Exception:
+            pass
+        logger.info("Session %s ended from dashboard — WebSocket closed", session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -316,16 +337,19 @@ async def test_tts(body: dict):
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
-    # print(f"[ws] WebSocket accepted for session {session_id}")
-
-    # Resolve user_id from query param (WebSocket can't use headers reliably
-    # from all clients)
     user_id = websocket.query_params.get("user_id")
     if not user_id:
         await websocket.close(code=4001, reason="user_id query param required")
         return
 
-    # print(f"[ws] User {user_id} connected to session {session_id}")
+    # Register so POST /sessions/{id}/end can close this connection and stop audio/vision processing
+    old = _active_session_websockets.pop(session_id, None)
+    if old is not None:
+        try:
+            await old.close(code=1000, reason="Replaced by new connection")
+        except Exception:
+            pass
+    _active_session_websockets[session_id] = websocket
 
     # Callback: send bytes back to the glasses rig
     async def send_audio(audio_bytes: bytes) -> None:
@@ -393,11 +417,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         logger.info("Client disconnected from session %s", session_id)
-        # print(f"[ws] Client disconnected — session {session_id} ended ({audio_msg_count} audio chunks, {signal_msg_count} speaker signals received)")
     except Exception as exc:
         logger.error("WebSocket error for session %s: %s", session_id, exc)
-        # print(f"[ws] ERROR in session {session_id}: {exc}")
     finally:
+        _active_session_websockets.pop(session_id, None)
         # Snapshot signal history BEFORE stopping (stop() may clear state)
         audio_signals = list(coaching._audio_signals)
 

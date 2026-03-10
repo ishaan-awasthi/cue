@@ -18,110 +18,88 @@ export default function ReportPage() {
   useEffect(() => {
     setState("loading");
     getSessionReport(sessionId)
-      .then((r) => {
-        setReport(r);
-        setState("done");
-      })
-      .catch((err) => {
-        setErrorMsg(err instanceof Error ? err.message : "Failed to generate report");
-        setState("error");
-      });
+      .then((r) => { setReport(r); setState("done"); })
+      .catch((err) => { setErrorMsg(err instanceof Error ? err.message : "Failed to generate report"); setState("error"); });
   }, [sessionId]);
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-10 bg-gray-950 text-gray-100 min-h-screen">
+    <main style={{ maxWidth: "720px", margin: "0 auto", padding: "40px 16px", background: "var(--bg)", color: "var(--fg)", minHeight: "100vh" }}>
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-gray-500 mb-6">
-        <Link href="/app" className="hover:text-aqua transition-colors">Sessions</Link>
-        <span>/</span>
-        <Link href={`/sessions/${sessionId}`} className="hover:text-aqua transition-colors">Session</Link>
-        <span>/</span>
-        <span className="text-gray-400">Report</span>
+      <div className="flex items-center gap-2" style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)", marginBottom: "32px" }}>
+        <Link href="/app" style={{ color: "rgba(240,245,243,0.4)" }}>Sessions</Link>
+        <span style={{ color: "rgba(240,245,243,0.2)" }}>/</span>
+        <Link href={`/sessions/${sessionId}`} style={{ color: "rgba(240,245,243,0.4)" }}>Session</Link>
+        <span style={{ color: "rgba(240,245,243,0.2)" }}>/</span>
+        <span style={{ color: "rgba(240,245,243,0.6)" }}>Report</span>
       </div>
 
-      <h1 className="text-2xl font-bold text-white mb-6">Coaching Report</h1>
+      <h1 style={{ fontSize: "clamp(2rem, 5vw, 3rem)", fontWeight: 900, letterSpacing: "-0.04em", lineHeight: 0.95, marginBottom: "32px" }}>
+        Coaching report
+      </h1>
 
       {state === "loading" && (
-        <div className="flex flex-col items-center gap-4 py-16 text-gray-500">
-          <div className="w-8 h-8 border-2 border-aqua border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm">Analysing session…</p>
+        <div className="flex flex-col items-center" style={{ gap: "16px", padding: "64px 0", color: "rgba(240,245,243,0.4)" }}>
+          <div style={{ width: "28px", height: "28px", border: "2px solid var(--aqua)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+          <p style={{ fontSize: "0.875rem" }}>Analysing session…</p>
         </div>
       )}
 
       {state === "error" && (
-        <div className="rounded-xl border border-gray-600 bg-gray-800/50 p-6 text-gray-300 text-sm">
-          {errorMsg}
-        </div>
+        <div className="feature-card" style={{ padding: "24px", color: "rgba(240,245,243,0.6)", fontSize: "0.875rem" }}>{errorMsg}</div>
       )}
 
       {state === "done" && report && (
-        <div className="space-y-8">
-          {/* What went well */}
-          <section>
-            <h2 className="text-lg font-semibold text-gray-200 mb-3 flex items-center gap-2">
-              <span className="text-aqua">✓</span> What Went Well
-            </h2>
-            <ul className="space-y-2">
+        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+          <section className="feature-card">
+            <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "16px" }}>What went well</p>
+            <ul style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {report.report.what_went_well.map((item, i) => (
-                <li key={i} className="flex gap-2 text-sm text-gray-300">
-                  <span className="mt-0.5 text-aqua shrink-0">•</span>
-                  {item}
+                <li key={i} style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.7)", display: "flex", gap: "8px" }}>
+                  <span style={{ color: "var(--aqua)", flexShrink: 0 }}>—</span>{item}
                 </li>
               ))}
             </ul>
           </section>
 
-          {/* Areas to improve */}
-          <section>
-            <h2 className="text-lg font-semibold text-gray-200 mb-3 flex items-center gap-2">
-              <span className="text-aqua">↑</span> Areas to Improve
-            </h2>
-            <ul className="space-y-2">
+          <section className="feature-card">
+            <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "16px" }}>Areas to improve</p>
+            <ul style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {report.report.areas_to_improve.map((item, i) => (
-                <li key={i} className="flex gap-2 text-sm text-gray-300">
-                  <span className="mt-0.5 text-aqua shrink-0">•</span>
-                  {item}
+                <li key={i} style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.7)", display: "flex", gap: "8px" }}>
+                  <span style={{ color: "var(--aqua)", flexShrink: 0 }}>—</span>{item}
                 </li>
               ))}
             </ul>
           </section>
 
-          {/* Fluency summary */}
           {report.report.fluency_summary && (
-            <section>
-              <h2 className="text-lg font-semibold text-gray-200 mb-3">Fluency</h2>
-              <p className="text-sm text-gray-400 leading-relaxed">
-                {report.report.fluency_summary}
-              </p>
+            <section className="feature-card">
+              <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "12px" }}>Fluency</p>
+              <p style={{ fontSize: "0.9rem", lineHeight: 1.8, color: "rgba(240,245,243,0.6)" }}>{report.report.fluency_summary}</p>
             </section>
           )}
 
-          {/* Key moments */}
           {report.report.key_moments?.length > 0 && (
-            <section>
-              <h2 className="text-lg font-semibold text-gray-200 mb-3">Key Moments to Rewatch</h2>
-              <ul className="space-y-2">
+            <section className="feature-card">
+              <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "16px" }}>Key moments</p>
+              <ul style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {report.report.key_moments.map((m, i) => (
-                  <li
-                    key={i}
-                    className="flex gap-3 rounded-lg border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm"
-                  >
-                    <span className="font-mono text-gray-500 shrink-0">{m.timestamp}</span>
-                    <span className="text-gray-300">{m.observation}</span>
+                  <li key={i} style={{ display: "flex", gap: "12px", border: "1px solid rgba(45,255,192,0.1)", borderRadius: "12px", padding: "12px 16px", fontSize: "0.875rem" }}>
+                    <span style={{ fontFamily: "monospace", color: "rgba(240,245,243,0.3)", flexShrink: 0 }}>{m.timestamp}</span>
+                    <span style={{ color: "rgba(240,245,243,0.7)" }}>{m.observation}</span>
                   </li>
                 ))}
               </ul>
             </section>
           )}
 
-          {/* Suggested drills */}
           {report.report.suggested_drills?.length > 0 && (
-            <section>
-              <h2 className="text-lg font-semibold text-gray-200 mb-3">Suggested Practice Drills</h2>
-              <ol className="space-y-2 list-decimal list-inside">
+            <section className="feature-card">
+              <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "16px" }}>Suggested drills</p>
+              <ol style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {report.report.suggested_drills.map((drill, i) => (
-                  <li key={i} className="text-sm text-gray-300">
-                    {drill}
+                  <li key={i} style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.7)", display: "flex", gap: "8px" }}>
+                    <span style={{ color: "var(--aqua)", fontWeight: 700, flexShrink: 0 }}>{i + 1}.</span>{drill}
                   </li>
                 ))}
               </ol>

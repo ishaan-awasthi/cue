@@ -11,8 +11,14 @@ export type { Session, SessionEvent, UploadedFile };
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Default user ID used in dev.  In production replace with real auth.
-const DEFAULT_USER_ID =
+export const DEFAULT_USER_ID =
   process.env.NEXT_PUBLIC_USER_ID ?? "00000000-0000-0000-0000-000000000001";
+
+/** WebSocket URL for live session audio streaming (ws scheme, same host/port as API). */
+export function sessionWebSocketUrl(sessionId: string): string {
+  const base = BASE_URL.replace(/^http/, "ws");
+  return `${base}/ws/${sessionId}?user_id=${encodeURIComponent(DEFAULT_USER_ID)}`;
+}
 
 function headers(extra: Record<string, string> = {}): HeadersInit {
   return {
@@ -68,6 +74,16 @@ export async function createSession(): Promise<Session> {
   const data = await res.json();
   if (!data?.id) throw new Error("Invalid session response");
   return data as Session;
+}
+
+/** Tell the backend to end the live session: close the WebSocket so audio/vision processing stops. */
+export async function endSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/end`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (res.status === 204) return;
+  if (!res.ok) throw new Error(`endSession failed: ${res.statusText}`);
 }
 
 // ---------------------------------------------------------------------------

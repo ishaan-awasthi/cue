@@ -9,13 +9,6 @@ interface Props {
 }
 
 const ACCEPTED_TYPES = ".pdf,.pptx,.docx,.txt,.md";
-const ACCEPTED_MIME = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-  "text/markdown",
-];
 
 type UploadState = "idle" | "uploading" | "success" | "error";
 
@@ -33,10 +26,8 @@ export default function FileUploader({ onUploaded }: Props) {
         setErrorMsg(`Unsupported file type: ${ext}. Accepted: ${ACCEPTED_TYPES}`);
         return;
       }
-
       setState("uploading");
       setErrorMsg("");
-
       try {
         const result = await uploadFile(file);
         setUploadedFile(result);
@@ -66,69 +57,54 @@ export default function FileUploader({ onUploaded }: Props) {
   return (
     <div
       onDrop={onDrop}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      }}
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
       onDragLeave={() => setIsDragging(false)}
-      className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-        isDragging
-          ? "border-aqua bg-aqua/10"
-          : state === "error"
-          ? "border-gray-500 bg-gray-800/50"
-          : state === "success"
-          ? "border-aqua/50 bg-aqua/5"
-          : "border-gray-600 bg-gray-800/30 hover:border-aqua/50 hover:bg-aqua/5"
-      }`}
+      style={{
+        border: `2px dashed ${isDragging ? "var(--aqua)" : state === "error" ? "rgba(248,113,113,0.3)" : state === "success" ? "rgba(45,255,192,0.3)" : "rgba(45,255,192,0.12)"}`,
+        borderRadius: "12px",
+        padding: "32px",
+        textAlign: "center",
+        background: isDragging ? "rgba(45,255,192,0.06)" : state === "success" ? "rgba(45,255,192,0.03)" : "rgba(240,245,243,0.02)",
+        transition: "border-color 0.2s, background 0.2s",
+      }}
     >
       {state === "idle" && (
         <>
-          <p className="text-gray-400 text-sm">
-            Drag &amp; drop a file here, or{" "}
-            <label className="text-aqua underline cursor-pointer">
+          <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.5)" }}>
+            Drag & drop a file, or{" "}
+            <label style={{ color: "var(--aqua)", textDecoration: "underline", cursor: "pointer" }}>
               browse
-              <input
-                type="file"
-                accept={ACCEPTED_TYPES}
-                className="hidden"
-                onChange={onInputChange}
-              />
+              <input type="file" accept={ACCEPTED_TYPES} style={{ display: "none" }} onChange={onInputChange} />
             </label>
           </p>
-          <p className="mt-1 text-xs text-gray-500">PDF, PPTX, DOCX, TXT, MD</p>
+          <p style={{ marginTop: "6px", fontSize: "0.75rem", color: "rgba(240,245,243,0.3)" }}>PDF · PPTX · DOCX · TXT · MD</p>
         </>
       )}
 
       {state === "uploading" && (
-        <div className="flex flex-col items-center gap-2">
-          <div className="w-6 h-6 border-2 border-aqua border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-aqua">Uploading &amp; indexing…</p>
+        <div className="flex flex-col items-center" style={{ gap: "8px" }}>
+          <div style={{ width: "20px", height: "20px", border: "2px solid var(--aqua)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+          <p style={{ fontSize: "0.875rem", color: "var(--aqua)" }}>Uploading & indexing…</p>
         </div>
       )}
 
       {state === "success" && uploadedFile && (
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-aqua font-medium text-sm">✓ Uploaded successfully</p>
-          <p className="text-xs text-gray-500">
+        <div className="flex flex-col items-center" style={{ gap: "4px" }}>
+          <p style={{ fontWeight: 700, fontSize: "0.875rem", color: "var(--aqua)" }}>Uploaded</p>
+          <p style={{ fontSize: "0.75rem", color: "rgba(240,245,243,0.4)" }}>
             {uploadedFile.filename} — {uploadedFile.chunk_count} chunks indexed
           </p>
-          <button
-            className="mt-2 text-xs text-aqua underline hover:no-underline"
-            onClick={() => setState("idle")}
-          >
+          <button onClick={() => setState("idle")} style={{ marginTop: "8px", fontSize: "0.75rem", color: "var(--aqua)", textDecoration: "underline", background: "none", border: "none", cursor: "pointer" }}>
             Upload another
           </button>
         </div>
       )}
 
       {state === "error" && (
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-gray-300 font-medium text-sm">Upload failed</p>
-          <p className="text-xs text-gray-500">{errorMsg}</p>
-          <button
-            className="mt-2 text-xs text-aqua underline hover:no-underline"
-            onClick={() => setState("idle")}
-          >
+        <div className="flex flex-col items-center" style={{ gap: "4px" }}>
+          <p style={{ fontWeight: 700, fontSize: "0.875rem", color: "var(--fg)" }}>Upload failed</p>
+          <p style={{ fontSize: "0.75rem", color: "rgba(240,245,243,0.4)" }}>{errorMsg}</p>
+          <button onClick={() => setState("idle")} style={{ marginTop: "8px", fontSize: "0.75rem", color: "var(--aqua)", textDecoration: "underline", background: "none", border: "none", cursor: "pointer" }}>
             Try again
           </button>
         </div>

@@ -35,7 +35,6 @@ export default function AppSidebar() {
       }
       setCreateError(message);
       console.error("Create session failed:", err);
-      // Still open prep view (upload + chat) so the user can use the UI; actions will show errors until backend is up
       const fallbackId = crypto.randomUUID();
       router.push(`/app/sessions/${fallbackId}`);
     } finally {
@@ -48,46 +47,52 @@ export default function AppSidebar() {
     : null;
 
   return (
-    <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+    <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
       <button
         onClick={handleNewSession}
         disabled={creating}
-        className="w-full rounded-lg bg-aqua px-3 py-2.5 text-sm font-medium text-gray-950 hover:bg-aqua-300 disabled:opacity-50 transition-colors"
+        className="btn-pill btn-primary w-full"
+        style={{ padding: "8px 16px", textAlign: "center", justifyContent: "center" }}
       >
         {creating ? "Creating…" : "New session"}
       </button>
 
       {createError && (
-        <p className="text-xs text-red-400 px-1 py-1" role="alert">
+        <p style={{ fontSize: "0.75rem", color: "#f87171", padding: "0 4px" }} role="alert">
           {createError}
         </p>
       )}
 
       {loading ? (
-        <p className="text-xs text-gray-500 py-2">Loading…</p>
+        <p style={{ fontSize: "0.75rem", color: "rgba(240,245,243,0.3)", padding: "8px 4px" }}>Loading…</p>
       ) : sessions.length === 0 ? (
-        <p className="text-xs text-gray-500 py-2">No sessions yet</p>
+        <p style={{ fontSize: "0.75rem", color: "rgba(240,245,243,0.3)", padding: "8px 4px" }}>No sessions yet</p>
       ) : (
-        <ul className="space-y-0.5">
+        <ul style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
           {sessions.map((s) => {
             const isActive = sessionIdFromPath === s.id;
             return (
               <li key={s.id}>
                 <button
                   onClick={() => router.push(`/app/sessions/${s.id}`)}
-                  className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${
-                    isActive
-                      ? "bg-gray-700 text-white"
-                      : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"
-                  }`}
+                  className="w-full text-left"
+                  style={{
+                    borderRadius: "12px",
+                    padding: "10px 12px",
+                    fontSize: "0.875rem",
+                    transition: "background 0.15s, color 0.15s",
+                    background: isActive ? "rgba(45,255,192,0.1)" : "transparent",
+                    color: isActive ? "var(--fg)" : "rgba(240,245,243,0.5)",
+                    borderLeft: isActive ? "2px solid var(--aqua)" : "2px solid transparent",
+                  }}
                 >
-                  <span className="block truncate">
+                  <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {s.started_at
                       ? format(new Date(s.started_at), "MMM d, h:mm a")
                       : "Session"}
                   </span>
                   {s.overall_score != null && (
-                    <span className="block text-xs text-gray-500 mt-0.5">
+                    <span style={{ display: "block", fontSize: "0.7rem", color: "rgba(240,245,243,0.3)", marginTop: "2px" }}>
                       Score: {Math.round(s.overall_score)}
                     </span>
                   )}

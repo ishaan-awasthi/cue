@@ -3,21 +3,24 @@ import AppSidebar from "./AppSidebar";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex">
+    <div className="min-h-screen flex" style={{ background: "var(--bg)", color: "var(--fg)" }}>
       {/* Sidebar */}
-      <aside className="w-64 shrink-0 border-r border-gray-800 flex flex-col bg-gray-900/30">
-        <div className="p-3 border-b border-gray-800">
-          <Link href="/app" className="text-lg font-semibold text-white">
-            Cue
+      <aside
+        className="w-60 shrink-0 flex flex-col"
+        style={{ borderRight: "1px solid rgba(45,255,192,0.1)" }}
+      >
+        <div className="px-4 pt-4 pb-2" style={{ borderBottom: "1px solid rgba(45,255,192,0.1)" }}>
+          <Link
+            href="/app"
+            style={{ fontSize: "2.6rem", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--aqua)" }}
+          >
+            cue.
           </Link>
         </div>
         <AppSidebar />
-        <div className="p-3 mt-auto border-t border-gray-800">
-          <Link
-            href="/app/practice"
-            className="block w-full rounded-lg bg-gray-800 px-3 py-2.5 text-sm font-medium text-gray-200 hover:bg-gray-700 hover:text-aqua transition-colors text-center"
-          >
-            Practice from session
+        <div className="p-3 mt-auto" style={{ borderTop: "1px solid rgba(45,255,192,0.1)" }}>
+          <Link href="/app/practice" className="btn-pill btn-ghost" style={{ padding: "8px 16px", width: "100%", justifyContent: "center" }}>
+            Practice
           </Link>
         </div>
       </aside>

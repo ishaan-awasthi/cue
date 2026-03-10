@@ -38,10 +38,7 @@ export default function SessionDetailPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [s, evs] = await Promise.all([
-          getSession(sessionId),
-          getSessionEvents(sessionId),
-        ]);
+        const [s, evs] = await Promise.all([getSession(sessionId), getSessionEvents(sessionId)]);
         setSession(s ?? null);
         setEvents(Array.isArray(evs) ? evs : []);
       } finally {
@@ -52,23 +49,17 @@ export default function SessionDetailPage() {
   }, [sessionId]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-gray-500 text-sm bg-gray-950">
-        Loading session…
-      </div>
-    );
+    return <div className="flex items-center justify-center h-64" style={{ background: "var(--bg)", color: "rgba(240,245,243,0.4)", fontSize: "0.875rem" }}>Loading session…</div>;
   }
 
   if (!session) {
-    return <div className="p-8 text-gray-400 bg-gray-950 min-h-screen">Session not found.</div>;
+    return <div style={{ padding: "32px", color: "rgba(240,245,243,0.5)", background: "var(--bg)", minHeight: "100vh" }}>Session not found.</div>;
   }
 
   const summary = session.summary as Record<string, number> | null;
   const nudgeCount = events.filter((e) => e.event_type === "nudge").length;
   const qaCount = events.filter((e) => e.event_type === "qa_event").length;
-  const qaWhispered = events.filter(
-    (e) => e.event_type === "qa_event" && e.payload.whispered
-  ).length;
+  const qaWhispered = events.filter((e) => e.event_type === "qa_event" && e.payload.whispered).length;
 
   const paceSeries = buildMetricSeries(events, "audio_signal", "words_per_minute");
   const pitchSeries = buildMetricSeries(events, "audio_signal", "pitch_variance");
@@ -76,60 +67,63 @@ export default function SessionDetailPage() {
   const attentionSeries = buildMetricSeries(events, "audience_signal", "attention_score");
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-10 bg-gray-950 text-gray-100 min-h-screen">
+    <main style={{ maxWidth: "900px", margin: "0 auto", padding: "40px 16px", background: "var(--bg)", color: "var(--fg)", minHeight: "100vh" }}>
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-gray-500 mb-6">
-        <Link href="/app" className="hover:text-aqua transition-colors">Sessions</Link>
-        <span>/</span>
-        <span className="text-gray-400">
-          {format(new Date(session.started_at), "MMM d, yyyy")}
-        </span>
+      <div className="flex items-center gap-2" style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)", marginBottom: "32px" }}>
+        <Link href="/app" style={{ color: "rgba(240,245,243,0.4)" }}>Sessions</Link>
+        <span style={{ color: "rgba(240,245,243,0.2)" }}>/</span>
+        <span style={{ color: "rgba(240,245,243,0.6)" }}>{format(new Date(session.started_at), "MMM d, yyyy")}</span>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8">
+      <div className="flex flex-col lg:flex-row" style={{ gap: "32px" }}>
         {/* Main content */}
         <div className="flex-1 min-w-0">
           {/* Tabs */}
-          <div className="flex gap-1 mb-6 border-b border-gray-700">
+          <div className="flex" style={{ gap: 0, marginBottom: "24px", borderBottom: "1px solid rgba(45,255,192,0.1)" }}>
             {(["transcript", "nudges", "charts"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 text-sm font-medium capitalize transition-colors ${
-                  activeTab === tab
-                    ? "border-b-2 border-aqua text-aqua"
-                    : "text-gray-500 hover:text-gray-300"
-                }`}
+                style={{
+                  padding: "10px 16px",
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  transition: "color 0.15s",
+                  borderBottom: activeTab === tab ? "2px solid var(--aqua)" : "2px solid transparent",
+                  color: activeTab === tab ? "var(--aqua)" : "rgba(240,245,243,0.4)",
+                  background: "none",
+                  border: "none",
+                  borderBottom: activeTab === tab ? "2px solid var(--aqua)" : "2px solid transparent",
+                  cursor: "pointer",
+                  marginBottom: "-1px",
+                }}
               >
                 {tab}
               </button>
             ))}
             <Link
               href={`/sessions/${sessionId}/report`}
-              className="ml-auto px-4 py-2 text-sm font-medium text-aqua hover:underline"
+              style={{ marginLeft: "auto", padding: "10px 16px", fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--aqua)" }}
             >
               Full Report →
             </Link>
           </div>
 
           {activeTab === "transcript" && (
-            <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5 max-h-[60vh] overflow-y-auto">
-              <TranscriptPlayer
-                events={events}
-                sessionStartedAt={session.started_at}
-                currentTime={currentTime}
-              />
+            <div className="feature-card" style={{ maxHeight: "60vh", overflowY: "auto", padding: "20px" }}>
+              <TranscriptPlayer events={events} sessionStartedAt={session.started_at} currentTime={currentTime} />
             </div>
           )}
 
           {activeTab === "nudges" && (
-            <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+            <div className="feature-card" style={{ padding: "20px" }}>
               <NudgeTimeline
                 events={events}
                 sessionStartedAt={session.started_at}
                 onSeek={(ts) => {
-                  const sec =
-                    (new Date(ts).getTime() - new Date(session.started_at).getTime()) / 1000;
+                  const sec = (new Date(ts).getTime() - new Date(session.started_at).getTime()) / 1000;
                   setCurrentTime(Math.max(0, sec));
                   setActiveTab("transcript");
                 }}
@@ -138,47 +132,49 @@ export default function SessionDetailPage() {
           )}
 
           {activeTab === "charts" && (
-            <div className="space-y-6 rounded-xl border border-gray-700 bg-gray-900/50 p-5">
-              <MetricsChart data={paceSeries} label="Speaking Pace (WPM)" color="#00d4aa" unit=" wpm" yMin={0} />
-              <MetricsChart data={pitchSeries} label="Pitch Variance" color="#00d4aa" unit="" yMin={0} />
-              <MetricsChart data={volumeSeries} label="Volume (RMS)" color="#00d4aa" unit="" yMin={0} />
+            <div className="feature-card" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "32px" }}>
+              <MetricsChart data={paceSeries} label="Speaking pace" unit=" wpm" yMin={0} />
+              <MetricsChart data={pitchSeries} label="Pitch variance" unit="" yMin={0} />
+              <MetricsChart data={volumeSeries} label="Volume (RMS)" unit="" yMin={0} />
               <AttentionHeatmap data={attentionSeries} />
             </div>
           )}
         </div>
 
-        {/* Sidebar */}
-        <aside className="w-full lg:w-64 shrink-0">
-          <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5 space-y-4">
+        {/* Sidebar stats */}
+        <aside style={{ width: "100%", maxWidth: "224px", flexShrink: 0 }}>
+          <div className="feature-card" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500">Score</p>
-              <p className={`text-4xl font-bold mt-1 ${
-                (session.overall_score ?? 0) >= 80
-                  ? "text-aqua"
-                  : (session.overall_score ?? 0) >= 60
-                  ? "text-gray-300"
-                  : "text-gray-400"
-              }`}>
+              <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "4px" }}>Score</p>
+              <p
+                style={{
+                  fontSize: "3rem",
+                  fontWeight: 900,
+                  letterSpacing: "-0.04em",
+                  lineHeight: 0.95,
+                  color: (session.overall_score ?? 0) >= 80 ? "var(--aqua)" : "var(--fg)",
+                }}
+              >
                 {session.overall_score != null ? Math.round(session.overall_score) : "—"}
               </p>
             </div>
 
-            <hr className="border-gray-700" />
+            <div style={{ height: "1px", background: "rgba(45,255,192,0.1)" }} />
 
-            <Stat label="Duration" value={formatDur(session.duration_seconds)} />
-            <Stat label="Nudges" value={String(nudgeCount)} />
-            <Stat label="Q&A events" value={String(qaCount)} />
-            <Stat label="Whispers delivered" value={String(qaWhispered)} />
+            {[
+              { label: "Duration", value: formatDur(session.duration_seconds) },
+              { label: "Nudges", value: String(nudgeCount) },
+              { label: "Q&A events", value: String(qaCount) },
+              { label: "Whispers", value: String(qaWhispered) },
+            ].map(({ label, value }) => (
+              <Stat key={label} label={label} value={value} />
+            ))}
 
             {summary && (
               <>
-                <hr className="border-gray-700" />
-                {summary.avg_wpm != null && (
-                  <Stat label="Avg WPM" value={String(Math.round(summary.avg_wpm))} />
-                )}
-                {summary.total_fillers != null && (
-                  <Stat label="Filler words" value={String(summary.total_fillers)} />
-                )}
+                <div style={{ height: "1px", background: "rgba(45,255,192,0.1)" }} />
+                {summary.avg_wpm != null && <Stat label="Avg WPM" value={String(Math.round(summary.avg_wpm))} />}
+                {summary.total_fillers != null && <Stat label="Filler words" value={String(summary.total_fillers)} />}
               </>
             )}
           </div>
@@ -190,9 +186,9 @@ export default function SessionDetailPage() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between items-baseline">
-      <span className="text-xs text-gray-500">{label}</span>
-      <span className="text-sm font-semibold text-gray-200">{value}</span>
+    <div className="flex items-baseline justify-between" style={{ gap: "8px" }}>
+      <span style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--fg)" }}>{value}</span>
     </div>
   );
 }
