@@ -1,4 +1,4 @@
-# Cue
+# Cue!
 
 Cue is a real-time presentation coaching system using smart glasses. It helps speakers improve by capturing their delivery and audience attention, delivering live nudges via earpiece, and whispering Q&A answers from uploaded reference materials when needed.
 
