@@ -12,6 +12,23 @@ import type { PracticeNudge, PracticeAnalyzeResult } from "../../../lib/api";
 // Types
 // ---------------------------------------------------------------------------
 
+// SpeechRecognition is not always in older TS dom lib versions — declare locally
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((e: SpeechRecognitionEvent) => void) | null;
+  onerror: ((e: Event) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
 interface SpeakingDrill {
   type: "speaking";
   id: string;
@@ -165,14 +182,15 @@ function useSpeechRecorder(): RecorderState {
   const [fillerCount, setFillerCount] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(0);
 
-  const recogRef = useRef<SpeechRecognition | null>(null);
+  const recogRef = useRef<SpeechRecognitionInstance | null>(null);
   const finalRef = useRef("");
   const startTimeRef = useRef<number>(0);
 
   const start = useCallback(() => {
-    const SpeechRecognitionCtor =
-      (window as Window & { SpeechRecognition?: typeof SpeechRecognition; webkitSpeechRecognition?: typeof SpeechRecognition }).SpeechRecognition ??
-      (window as Window & { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition;
+    const SpeechRecognitionCtor = (
+      (window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }).SpeechRecognition ??
+      (window as Window & { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition
+    );
     if (!SpeechRecognitionCtor) {
       alert("Speech recognition is not supported in this browser. Try Chrome.");
       return;
