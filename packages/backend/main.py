@@ -472,6 +472,116 @@ def _compute_overall_score(metrics: dict[str, float]) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Practice Mode
+# ---------------------------------------------------------------------------
+
+class PracticeAnalyzeRequest(BaseModel):
+    transcript: str
+    words_per_minute: float = 0.0
+    filler_word_count: int = 0
+    duration_seconds: float = 0.0
+
+
+class PracticeNudge(BaseModel):
+    trigger: str   # "filler_word_rate" | "words_per_minute"
+    text: str
+    value: float
+
+
+class PracticeAnalyzeResponse(BaseModel):
+    score: float   # 0–100
+    nudges: list[PracticeNudge]
+    filler_words_found: list[str]
+    wpm: float
+
+
+PRACTICE_FILLER_UNIGRAMS = {"uh", "um", "hmm", "er", "erm", "like", "so", "basically", "literally", "actually"}
+PRACTICE_FILLER_BIGRAMS  = ["you know", "i mean", "kind of", "sort of", "you see"]
+
+
+def _count_fillers(transcript: str) -> tuple[int, list[str]]:
+    import re
+    text = transcript.lower()
+    found: list[str] = []
+    count = 0
+    # 1. Scan bigrams first, replace with placeholder to avoid double-counting
+    for bigram in PRACTICE_FILLER_BIGRAMS:
+        pattern = r"\b" + re.escape(bigram) + r"\b"
+        matches = re.findall(pattern, text)
+        if matches:
+            found.append(bigram)
+            count += len(matches)
+            text = re.sub(pattern, " _ ", text)
+    # 2. Scan unigrams on remaining text
+    for word in text.split():
+        word_clean = re.sub(r"[^a-z]", "", word)
+        if word_clean in PRACTICE_FILLER_UNIGRAMS:
+            if word_clean not in found:
+                found.append(word_clean)
+            count += 1
+    return count, found
+
+
+@app.post("/practice/analyze", response_model=PracticeAnalyzeResponse)
+async def practice_analyze(body: PracticeAnalyzeRequest):
+    # Recount fillers from transcript (override client value if client sent 0)
+    filler_count, filler_words_found = _count_fillers(body.transcript)
+    if body.filler_word_count != 0 and filler_count == 0:
+        filler_count = body.filler_word_count
+
+    # Compute WPM
+    wpm = body.words_per_minute
+    if wpm == 0.0 and body.duration_seconds > 0:
+        word_count = len(body.transcript.split())
+        wpm = (word_count / body.duration_seconds) * 60.0
+
+    duration_minutes = max(body.duration_seconds / 60.0, 0.001)
+    filler_rate = filler_count / duration_minutes
+
+    # Scoring
+    score = 80.0
+    if 110 <= wpm <= 160:
+        score += 10
+    elif wpm < 80 or wpm > 200:
+        score -= 15
+
+    if filler_rate < 1:
+        score += 10
+    elif filler_rate > 5:
+        score -= 15
+
+    score = max(0.0, min(100.0, round(score, 1)))
+
+    # Nudges
+    nudges: list[PracticeNudge] = []
+    if filler_rate > 3:
+        nudges.append(PracticeNudge(
+            trigger="filler_word_rate",
+            text=f"You used filler words {filler_rate:.1f} times per minute. Try pausing instead.",
+            value=filler_rate,
+        ))
+    if wpm < 100:
+        nudges.append(PracticeNudge(
+            trigger="words_per_minute",
+            text=f"You spoke at {wpm:.0f} WPM — a bit slow. Aim for 110–160 WPM.",
+            value=wpm,
+        ))
+    elif wpm > 180:
+        nudges.append(PracticeNudge(
+            trigger="words_per_minute",
+            text=f"You spoke at {wpm:.0f} WPM — quite fast. Aim for 110–160 WPM.",
+            value=wpm,
+        ))
+
+    return PracticeAnalyzeResponse(
+        score=score,
+        nudges=nudges,
+        filler_words_found=filler_words_found,
+        wpm=wpm,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
 
