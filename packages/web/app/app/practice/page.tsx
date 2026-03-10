@@ -26,6 +26,7 @@ interface SpeechRecognitionInstance extends EventTarget {
   onend: (() => void) | null;
   start(): void;
   stop(): void;
+  abort(): void;
 }
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
