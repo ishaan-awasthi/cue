@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { format } from "date-fns";
 import { getSessions, createSession, type Session } from "../../lib/api";
 
-export default function AppSidebar() {
+export default function AppSidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -26,6 +26,7 @@ export default function AppSidebar() {
     try {
       const session = await createSession();
       setSessions((prev) => [session, ...prev]);
+      onNavigate?.();
       router.push(`/app/sessions/${session.id}`);
     } catch (err) {
       let message = err instanceof Error ? err.message : "Could not create session";
@@ -36,6 +37,7 @@ export default function AppSidebar() {
       setCreateError(message);
       console.error("Create session failed:", err);
       const fallbackId = crypto.randomUUID();
+      onNavigate?.();
       router.push(`/app/sessions/${fallbackId}`);
     } finally {
       setCreating(false);
@@ -74,7 +76,7 @@ export default function AppSidebar() {
             return (
               <li key={s.id}>
                 <button
-                  onClick={() => router.push(`/app/sessions/${s.id}`)}
+                  onClick={() => { onNavigate?.(); router.push(`/app/sessions/${s.id}`); }}
                   className="w-full text-left"
                   style={{
                     borderRadius: "12px",
