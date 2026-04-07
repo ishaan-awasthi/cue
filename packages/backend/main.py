@@ -41,7 +41,9 @@ from .pipelines.qa import QAPipeline
 from .pipelines.vision import VisionPipeline
 from .pipelines import rag
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.CRITICAL)
+for _noisy in ("uvicorn", "uvicorn.access", "uvicorn.error", "fastapi", "deepgram", "httpx", "websockets"):
+    logging.getLogger(_noisy).setLevel(logging.CRITICAL)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Cue Backend", version="0.1.0")
@@ -372,6 +374,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     async def on_transcript_chunk(chunk: str):
         await qa.on_transcript_chunk(chunk)
+        await coaching.on_transcript_chunk(chunk)
 
     audio_pipeline = AudioPipeline(
         session_id=session_id,

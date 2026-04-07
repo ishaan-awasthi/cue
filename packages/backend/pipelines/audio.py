@@ -11,7 +11,7 @@ Also exposes a rolling transcript string to qa.py for question detection.
 from __future__ import annotations
 
 import asyncio
-import math
+import re
 from collections import deque
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
@@ -41,6 +41,21 @@ LIBROSA_WINDOW = 5.0        # seconds of audio buffered for librosa analysis
 
 # Filler words tracked by Deepgram's model
 FILLER_WORDS = {"uh", "um", "like", "you know", "so", "basically", "literally"}
+
+# ANSI colors for keyword highlighting in transcript output
+_RESET = "\033[0m"
+_KEYWORD_COLORS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r'\bliterally\b', re.IGNORECASE),                   "\033[1;33m"),  # bold yellow  — filler
+    (re.compile(r'\bslow(?:ly|er|est|ing|ed)?\b', re.IGNORECASE),   "\033[1;31m"),  # bold red     — pace
+    (re.compile(r'\bquick(?:ly|er|est)?\b', re.IGNORECASE),         "\033[1;32m"),  # bold green   — slow down
+    (re.compile(r'\bloud(?:ly|er|est)?\b', re.IGNORECASE),          "\033[1;34m"),  # bold blue    — volume
+]
+
+
+def _colorize(text: str) -> str:
+    for pattern, color in _KEYWORD_COLORS:
+        text = pattern.sub(lambda m: f"{color}{m.group()}{_RESET}", text)
+    return text
 
 
 class AudioPipeline:
@@ -154,7 +169,7 @@ class AudioPipeline:
             if not transcript:
                 return
 
-            print(f"[audio] Deepgram transcript: \"{transcript}\"")
+            print(_colorize(transcript))
 
             # Count filler words in this chunk
             words_lower = [w.word.lower() for w in alt.words]
@@ -197,13 +212,6 @@ class AudioPipeline:
             if not self._running:
                 break
             signal = await self._build_signal()
-            db = (20 * math.log10(signal.volume_rms) + 50) if signal.volume_rms > 0 else 0.0
-            print(
-                f"[audio] WPM={signal.words_per_minute:6.1f}  "
-                f"vol={db:+6.1f}dB  "
-                f"fillers={signal.filler_word_count}"
-                + (f"  transcript=\"{signal.transcript_chunk}\"" if signal.transcript_chunk else "")
-            )
             await self._on_signal(signal)
 
             # Reset per-window counters
