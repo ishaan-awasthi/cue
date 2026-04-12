@@ -57,10 +57,15 @@ export interface MetricRow {
 export interface UploadedFile {
   id: string;
   user_id: string;
+  session_id: string | null;
   filename: string;
   file_type: string;
+  mime_type: string | null;
   uploaded_at: string;
   chunk_count: number;
+  processing_status: "uploaded" | "parsing" | "embedded" | "ready" | "failed";
+  processed_at: string | null;
+  failed_reason: string | null;
 }
 
 // ---------------------------------------------------------------------------

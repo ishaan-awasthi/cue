@@ -127,16 +127,25 @@ def upsert_metrics(session_id: str, user_id: str, metrics_dict: dict[str, float]
 # Files & RAG chunks
 # ---------------------------------------------------------------------------
 
-def insert_file(user_id: str, filename: str, file_type: str) -> UploadedFile:
+def insert_file(
+    user_id: str,
+    filename: str,
+    file_type: str,
+    mime_type: str | None = None,
+    session_id: str | None = None,
+) -> UploadedFile:
     row = (
         supabase.table("uploaded_files")
         .insert(
             {
                 "user_id": user_id,
+                "session_id": session_id,
                 "filename": filename,
                 "file_type": file_type,
+                "mime_type": mime_type,
                 "uploaded_at": _now(),
                 "chunk_count": 0,
+                "processing_status": "uploaded",
             }
         )
         .execute()
@@ -151,6 +160,7 @@ def insert_chunk(
     chunk_text: str,
     chunk_index: int,
     embedding_vector: list[float],
+    metadata: dict[str, Any] | None = None,
 ) -> DocumentChunk:
     row = (
         supabase.table("document_chunks")
@@ -161,6 +171,7 @@ def insert_chunk(
                 "chunk_text": chunk_text,
                 "chunk_index": chunk_index,
                 "embedding": embedding_vector,
+                "metadata": metadata or {},
             }
         )
         .execute()
@@ -178,38 +189,74 @@ def similarity_search(
     user_id: str,
     query_embedding: list[float],
     top_k: int = 3,
+    session_id: str | None = None,
 ) -> list[DocumentChunk]:
-    """Cosine similarity search via pgvector RPC (defined in migration 002)."""
+    """Cosine similarity search via pgvector RPC (003); returns chunks with filename."""
+    payload: dict[str, Any] = {
+        "query_embedding": query_embedding,
+        "match_user_id": user_id,
+        "match_count": top_k,
+    }
+    if session_id:
+        payload["match_session_id"] = session_id
+
     rows = (
         supabase.rpc(
             "match_chunks",
-            {
-                "query_embedding": query_embedding,
-                "match_user_id": user_id,
-                "match_count": top_k,
-            },
+            payload,
         )
         .execute()
         .data
     )
-    return [DocumentChunk(**r) for r in rows]
+    return [DocumentChunk.from_db_row(r) for r in rows]
 
 
-def delete_file(file_id: str) -> None:
+def delete_file(file_id: str, user_id: str | None = None) -> None:
     # Chunks cascade-delete via FK constraint (ON DELETE CASCADE in migration)
-    supabase.table("uploaded_files").delete().eq("id", file_id).execute()
+    query = supabase.table("uploaded_files").delete().eq("id", file_id)
+    if user_id:
+        query = query.eq("user_id", user_id)
+    query.execute()
 
 
-def list_files(user_id: str) -> list[UploadedFile]:
-    rows = (
+def list_files(user_id: str, session_id: str | None = None) -> list[UploadedFile]:
+    query = (
         supabase.table("uploaded_files")
         .select("*")
         .eq("user_id", user_id)
-        .order("uploaded_at", desc=True)
-        .execute()
-        .data
     )
+    if session_id:
+        query = query.eq("session_id", session_id)
+    rows = query.order("uploaded_at", desc=True).execute().data
     return [UploadedFile(**r) for r in rows]
+
+
+def get_file(file_id: str) -> UploadedFile:
+    row = supabase.table("uploaded_files").select("*").eq("id", file_id).execute().data[0]
+    return UploadedFile(**row)
+
+
+def update_file_status(
+    file_id: str,
+    status: str,
+    chunk_count: int | None = None,
+    failed_reason: str | None = None,
+) -> UploadedFile:
+    payload: dict[str, Any] = {"processing_status": status}
+    if chunk_count is not None:
+        payload["chunk_count"] = chunk_count
+    if status in ("ready", "failed"):
+        payload["processed_at"] = _now()
+    if failed_reason is not None:
+        payload["failed_reason"] = failed_reason[:500]
+    row = (
+        supabase.table("uploaded_files")
+        .update(payload)
+        .eq("id", file_id)
+        .execute()
+        .data[0]
+    )
+    return UploadedFile(**row)
 
 
 # ---------------------------------------------------------------------------

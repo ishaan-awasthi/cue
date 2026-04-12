@@ -154,10 +154,21 @@ export async function listFiles(): Promise<UploadedFile[]> {
   return Array.isArray(data) ? data : [];
 }
 
-export async function uploadFile(file: File): Promise<UploadedFile> {
+export async function listSessionFiles(sessionId: string): Promise<UploadedFile[]> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/files`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`listSessionFiles failed: ${res.statusText}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+export async function uploadFile(file: File, sessionId?: string): Promise<UploadedFile> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${BASE_URL}/files/upload`, {
+  const url = sessionId ? `${BASE_URL}/sessions/${sessionId}/files` : `${BASE_URL}/files/upload`;
+  const res = await fetch(url, {
     method: "POST",
     headers: headers(),   // no Content-Type — browser sets it for FormData
     body: form,
@@ -174,6 +185,27 @@ export async function deleteFile(fileId: string): Promise<void> {
   if (!res.ok) throw new Error(`deleteFile failed: ${res.statusText}`);
 }
 
+export interface SessionQAResponse {
+  answer: string;
+  source: "session_docs" | "llm_fallback";
+  confidence: number;
+  supporting_context: Array<{ fileName: string; location: string }>;
+  status?: "ready" | "processing";
+}
+
+export async function askSessionQuestion(
+  sessionId: string,
+  question: string
+): Promise<SessionQAResponse> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/qa`, {
+    method: "POST",
+    headers: { ...headers(), "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? `session QA failed: ${res.statusText}`);
+  }
 // ---------------------------------------------------------------------------
 // Practice Mode
 // ---------------------------------------------------------------------------

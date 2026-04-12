@@ -9,3 +9,5 @@ packages/backend/models/*.bin
 packages/backend/models/*.pt
 packages/backend/models/*.safetensors
 packages/backend/models/*.task
+*.log
+supabase/.temp/

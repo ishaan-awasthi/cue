@@ -6,13 +6,14 @@ import type { UploadedFile } from "../lib/supabase";
 
 interface Props {
   onUploaded: (file: UploadedFile) => void;
+  sessionId?: string;
 }
 
 const ACCEPTED_TYPES = ".pdf,.pptx,.docx,.txt,.md";
 
 type UploadState = "idle" | "uploading" | "success" | "error";
 
-export default function FileUploader({ onUploaded }: Props) {
+export default function FileUploader({ onUploaded, sessionId }: Props) {
   const [state, setState] = useState<UploadState>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
@@ -29,7 +30,7 @@ export default function FileUploader({ onUploaded }: Props) {
       setState("uploading");
       setErrorMsg("");
       try {
-        const result = await uploadFile(file);
+        const result = await uploadFile(file, sessionId);
         setUploadedFile(result);
         setState("success");
         onUploaded(result);
