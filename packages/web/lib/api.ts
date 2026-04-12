@@ -206,6 +206,9 @@ export async function askSessionQuestion(
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? `session QA failed: ${res.statusText}`);
   }
+  return res.json();
+}
+
 // ---------------------------------------------------------------------------
 // Practice Mode
 // ---------------------------------------------------------------------------
