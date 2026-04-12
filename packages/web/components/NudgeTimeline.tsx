@@ -92,9 +92,9 @@ export default function NudgeTimeline({ events, sessionStartedAt, onSeek }: Prop
                     value: {String(event.payload.trigger_value)}
                   </p>
                 )}
-                {event.event_type === "qa_event" && event.payload.answer_text && (
+                {event.event_type === "qa_event" && typeof event.payload.answer_text === "string" && (
                   <p className="mt-1 italic opacity-70 line-clamp-2">
-                    Answer: {event.payload.answer_text as string}
+                    Answer: {event.payload.answer_text}
                   </p>
                 )}
               </div>

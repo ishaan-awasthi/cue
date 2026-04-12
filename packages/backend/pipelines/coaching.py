@@ -19,7 +19,7 @@ from typing import Callable, Awaitable
 from ..config import settings
 from ..db import queries
 from ..db.models import AudioSignal, AudienceSignal, Nudge
-from ..tts import synthesize
+from ..tts import synthesize_streaming, UTTERANCE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +63,12 @@ class CoachingPipeline:
         self._running = False
         self._nudge_task: asyncio.Task | None = None
 
-        # Track the last nudge type to avoid spamming the same nudge back-to-back
-        self._last_nudge: str | None = None
+        # Cooldown: track last fire time per nudge type to avoid spam
+        self._last_nudge_time: dict[str, float] = {}
+        self._nudge_cooldown_seconds: float = 15.0
+
+        # Delivery lock: don't start a new nudge while one is playing
+        self._nudge_in_progress: bool = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -140,6 +144,8 @@ class CoachingPipeline:
             if not self._running:
                 break
             print(f"[coaching] Evaluating nudge rules ({len(self._audio_signals)} audio, {len(self._audience_signals)} audience signals in window)...")
+            if self._nudge_in_progress:
+                continue
             nudge = self._evaluate()
             if nudge:
                 print(f"[coaching] Nudge triggered! trigger={nudge.trigger_signal} value={nudge.trigger_value} — \"{nudge.text}\"")
@@ -222,8 +228,10 @@ class CoachingPipeline:
         return None
 
     def _make_nudge(self, text: str, trigger_signal: str, trigger_value: float) -> Nudge | None:
-        # Avoid firing the exact same nudge twice in a row
-        if self._last_nudge == trigger_signal:
+        import time
+        now = time.monotonic()
+        last = self._last_nudge_time.get(trigger_signal, 0.0)
+        if now - last < self._nudge_cooldown_seconds:
             return None
         return Nudge(
             text=text,
@@ -233,12 +241,14 @@ class CoachingPipeline:
         )
 
     async def _fire_nudge(self, nudge: Nudge) -> None:
+        import time
+        self._nudge_in_progress = True
         try:
             print(f"[coaching] Synthesising nudge audio via TTS...")
-            audio_bytes = await synthesize(nudge.text)
-            print(f"[coaching] TTS returned {len(audio_bytes)} bytes — sending to glasses rig")
-            await self._send_audio(audio_bytes)
-            self._last_nudge = nudge.trigger_signal
+            await self._send_audio(UTTERANCE_SENTINEL)
+            async for chunk in synthesize_streaming(nudge.text):
+                await self._send_audio(chunk)
+            self._last_nudge_time[nudge.trigger_signal] = time.monotonic()
 
             # Persist
             await asyncio.to_thread(
@@ -252,3 +262,5 @@ class CoachingPipeline:
         except Exception as exc:
             logger.error("Failed to fire nudge: %s", exc)
             print(f"[coaching] ERROR firing nudge: {exc}")
+        finally:
+            self._nudge_in_progress = False

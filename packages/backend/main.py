@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Cue Backend", version="0.1.0")
 
+# Registry of active WebSocket per session_id. When the web app calls POST /sessions/{id}/end,
+# we close this WebSocket so the backend stops processing audio/vision and the client disconnects.
+_active_session_websockets: dict[str, WebSocket] = {}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -306,6 +310,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     print(f"[ws] User {user_id} connected to session {session_id}")
 
+    # Register so POST /sessions/{id}/end can close this connection
+    old = _active_session_websockets.pop(session_id, None)
+    if old is not None:
+        try:
+            await old.close(code=1000, reason="Replaced by new connection")
+        except Exception:
+            pass
+    _active_session_websockets[session_id] = websocket
+
     # Callback: send bytes back to the glasses rig
     async def send_audio(audio_bytes: bytes) -> None:
         try:
@@ -331,6 +344,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     async def on_transcript_chunk(chunk: str):
         _transcript_chunks.append(chunk)
         await qa.on_transcript_chunk(chunk)
+        await coaching.on_transcript_chunk(chunk)
 
     audio_pipeline = AudioPipeline(
         session_id=session_id,
@@ -348,7 +362,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         print(f"[ws] All pipelines started for session {session_id} (user={user_id})")
 
         audio_msg_count = 0
-        frame_msg_count = 0
+        signal_msg_count = 0
 
         while True:
             message = await websocket.receive()
@@ -361,26 +375,27 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await audio_pipeline.push_audio(message["bytes"])
 
             elif "text" in message:
-                # JSON envelope: {"type": "frame", "data": "<base64>"}
+                # JSON envelope: {"type": "speaker_signal", "attentive": bool, ...}
                 try:
                     msg = json.loads(message["text"])
-                    if msg.get("type") == "frame":
-                        frame_msg_count += 1
-                        if frame_msg_count == 1:
-                            print(f"[ws] First video frame received")
-                        elif frame_msg_count % 100 == 0:
-                            print(f"[ws] {frame_msg_count} frames received so far ({audio_msg_count} audio chunks)")
-                        await vision.push_frame(msg["data"])
+                    if msg.get("type") == "speaker_signal":
+                        signal_msg_count += 1
+                        if signal_msg_count == 1:
+                            print(f"[ws] First speaker signal received")
+                        elif signal_msg_count % 100 == 0:
+                            print(f"[ws] {signal_msg_count} speaker signals so far ({audio_msg_count} audio chunks)")
+                        await vision.push_signal(msg)
                 except (json.JSONDecodeError, KeyError):
                     pass
 
     except WebSocketDisconnect:
         logger.info("Client disconnected from session %s", session_id)
-        print(f"[ws] Client disconnected — session {session_id} ended ({audio_msg_count} audio chunks, {frame_msg_count} frames received)")
+        print(f"[ws] Client disconnected — session {session_id} ended ({audio_msg_count} audio chunks, {signal_msg_count} signals received)")
     except Exception as exc:
         logger.error("WebSocket error for session %s: %s", session_id, exc)
         print(f"[ws] ERROR in session {session_id}: {exc}")
     finally:
+        _active_session_websockets.pop(session_id, None)
         # Snapshot signal history BEFORE stopping (stop() may clear state)
         audio_signals = list(coaching._audio_signals)
 

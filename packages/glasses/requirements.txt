@@ -1,1 +1,1 @@
-# opencv-python, pyaudio, websockets, numpy, simpleaudio (for playing received audio bytes through AirPods)
+# opencv-python, mediapipe, scipy, pyaudio, websockets, numpy, simpleaudio
