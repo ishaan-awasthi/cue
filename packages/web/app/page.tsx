@@ -11,6 +11,16 @@ const MARQUEE_TEXT = "cue.\u00a0\u00a0\u00a0\u00a0cue.\u00a0\u00a0\u00a0\u00a0cu
 export default function Home() {
   const sectionRef = useRef<HTMLElement>(null);
   const [heroTextReady, setHeroTextReady] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [waitlistEmail, setWaitlistEmail] = useState("");
+  const [waitlistStatus, setWaitlistStatus] = useState<"idle" | "loading" | "success" | "duplicate" | "error">("idle");
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setHeroTextReady(true), 1750);
@@ -31,10 +41,36 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
+  async function handleWaitlist(e: React.FormEvent) {
+    e.preventDefault();
+    if (!waitlistEmail || waitlistStatus === "loading") return;
+    setWaitlistStatus("loading");
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: waitlistEmail }),
+      });
+      if (res.status === 409) {
+        setWaitlistStatus("duplicate");
+      } else if (!res.ok) {
+        setWaitlistStatus("error");
+      } else {
+        setWaitlistStatus("success");
+        setWaitlistEmail("");
+      }
+    } catch {
+      setWaitlistStatus("error");
+    }
+  }
+
   return (
     <main style={{ background: "var(--bg)", color: "var(--fg)" }}>
       {/* ─── HERO ──────────────────────────────────────────── */}
-      <section className="relative flex flex-col items-center justify-center" style={{ minHeight: "calc(100vh - 160px)" }}>
+      <section
+        className="relative flex flex-col items-center justify-center"
+        style={{ minHeight: isMobile ? "auto" : "calc(100vh - 160px)" }}
+      >
         {/* Aqua glow */}
         <div
           className="absolute inset-0 pointer-events-none"
@@ -45,44 +81,53 @@ export default function Home() {
           aria-hidden="true"
         />
 
-        {/* 3D Glasses */}
-        <div className="absolute left-0 right-0" style={{ top: "80px", bottom: "-120px", zIndex: 10 }}>
-          <GlassesViewer ready={true} />
-        </div>
-
-        {/* Top corners — cue. and Watch demo */}
-        {heroTextReady && (
-          <div
-            className="absolute top-0 left-0 right-0 flex items-center justify-between pointer-events-auto"
-            style={{ padding: "28px 32px", zIndex: 3 }}
-          >
-            <span
-              className="hero-fade"
-              style={{
-                animationDelay: "0ms",
-                fontSize: "1.4rem",
-                fontWeight: 900,
-                letterSpacing: "-0.04em",
-                color: "var(--aqua)",
-              }}
+        {isMobile ? (
+          /* ── Mobile hero: stacked layout with small glasses ── */
+          <>
+            <div
+              className="relative z-10 flex items-center justify-between w-full"
+              style={{ padding: "16px 20px" }}
             >
-              cue.
-            </span>
+              <span style={{ fontSize: "1.4rem", fontWeight: 900, letterSpacing: "-0.04em", color: "var(--aqua)" }}>
+                cue.
+              </span>
+              <Link href="/demo" className="btn-pill btn-ghost" style={{ padding: "6px 16px", fontSize: "0.78rem" }}>
+                Watch demo
+              </Link>
+            </div>
+            <div style={{ width: "100%", height: "220px", position: "relative", zIndex: 10 }}>
+              <GlassesViewer ready={true} />
+            </div>
+          </>
+        ) : (
+          /* ── Desktop hero: glasses fill viewport with corner text ── */
+          <>
+            <div className="absolute left-0 right-0" style={{ top: "80px", bottom: "-120px", zIndex: 10 }}>
+              <GlassesViewer ready={true} />
+            </div>
 
-            <Link
-              href="/demo"
-              className="hero-fade btn-pill btn-ghost"
-              style={{
-                animationDelay: "140ms",
-                padding: "8px 22px",
-                fontSize: "0.78rem",
-              }}
-            >
-              Watch demo
-            </Link>
-          </div>
+            {heroTextReady && (
+              <div
+                className="absolute top-0 left-0 right-0 flex items-center justify-between pointer-events-auto"
+                style={{ padding: "28px 32px", zIndex: 3 }}
+              >
+                <span
+                  className="hero-fade"
+                  style={{ animationDelay: "0ms", fontSize: "1.4rem", fontWeight: 900, letterSpacing: "-0.04em", color: "var(--aqua)" }}
+                >
+                  cue.
+                </span>
+                <Link
+                  href="/demo"
+                  className="hero-fade btn-pill btn-ghost"
+                  style={{ animationDelay: "140ms", padding: "8px 22px", fontSize: "0.78rem" }}
+                >
+                  Watch demo
+                </Link>
+              </div>
+            )}
+          </>
         )}
-
       </section>
 
       {/* ─── ABOUT ────────────────────────────────────────── */}
@@ -90,7 +135,7 @@ export default function Home() {
         id="about"
         ref={sectionRef}
         className="relative flex flex-col mx-auto"
-        style={{ maxWidth: "900px", padding: "0 48px 96px", gap: "80px", position: "relative", zIndex: 1 }}
+        style={{ maxWidth: "900px", padding: isMobile ? "0 20px 64px" : "0 48px 96px", gap: isMobile ? "48px" : "80px", position: "relative", zIndex: 1 }}
       >
         {/* Problem / Solution */}
         <div
@@ -168,7 +213,7 @@ export default function Home() {
       {/* ─── CTA ──────────────────────────────────────────── */}
       <section
         className="relative flex flex-col items-center text-center overflow-hidden"
-        style={{ padding: "120px 48px" }}
+        style={{ padding: isMobile ? "72px 20px" : "120px 48px" }}
       >
         {/* Background marquee */}
         <div className="absolute inset-0 flex flex-col justify-center gap-0 overflow-hidden" aria-hidden="true">
@@ -198,20 +243,94 @@ export default function Home() {
         />
 
         <div className="relative z-10 flex flex-col items-center" style={{ maxWidth: "640px", gap: "28px" }}>
-          <h2 style={{ fontSize: "clamp(2.5rem, 7vw, 5.5rem)", fontWeight: 900, letterSpacing: "-0.04em", lineHeight: 1 }}>
-            Get started.
+          <h2 style={{ fontSize: "clamp(2rem, 5.5vw, 4.5rem)", fontWeight: 900, letterSpacing: "-0.04em", lineHeight: 1 }}>
+            Join the waitlist.
           </h2>
-          <div className="flex items-center flex-wrap justify-center" style={{ gap: "16px" }}>
-            <Link href="/app" className="btn-pill btn-primary">Sign in →</Link>
-            <Link href="/demo" className="btn-pill btn-ghost">Watch demo</Link>
-          </div>
+          <p style={{ fontSize: "1rem", color: "rgba(240,245,243,0.5)", lineHeight: 1.7, maxWidth: "420px" }}>
+            Cue is invite-only right now. Drop your email and we&apos;ll reach out when a spot opens up.
+          </p>
+
+          {waitlistStatus === "success" ? (
+            <div
+              className="btn-pill"
+              style={{
+                background: "rgba(45,255,192,0.1)",
+                border: "1px solid rgba(45,255,192,0.3)",
+                color: "var(--aqua)",
+                padding: "12px 28px",
+                fontSize: "0.9rem",
+                cursor: "default",
+              }}
+            >
+              You&apos;re on the list. We&apos;ll be in touch.
+            </div>
+          ) : (
+            <form
+              onSubmit={handleWaitlist}
+              className="flex flex-wrap justify-center"
+              style={{ gap: "10px", width: "100%" }}
+            >
+              <input
+                type="email"
+                required
+                placeholder="your@email.com"
+                value={waitlistEmail}
+                onChange={(e) => {
+                  setWaitlistEmail(e.target.value);
+                  if (waitlistStatus !== "idle") setWaitlistStatus("idle");
+                }}
+                style={{
+                  background: "rgba(255,255,255,0.04)",
+                  border: waitlistStatus === "error" || waitlistStatus === "duplicate"
+                    ? "1px solid rgba(255,100,100,0.5)"
+                    : "1px solid rgba(45,255,192,0.18)",
+                  borderRadius: "9999px",
+                  color: "var(--fg)",
+                  padding: "12px 22px",
+                  fontSize: "0.9rem",
+                  outline: "none",
+                  width: isMobile ? "100%" : "260px",
+                  transition: "border-color 0.2s",
+                }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(45,255,192,0.5)")}
+                onBlur={(e) => (e.currentTarget.style.borderColor =
+                  waitlistStatus === "error" || waitlistStatus === "duplicate"
+                    ? "rgba(255,100,100,0.5)"
+                    : "rgba(45,255,192,0.18)"
+                )}
+              />
+              <button
+                type="submit"
+                disabled={waitlistStatus === "loading"}
+                className="btn-pill btn-primary"
+                style={{ opacity: waitlistStatus === "loading" ? 0.6 : 1, cursor: waitlistStatus === "loading" ? "wait" : "pointer" }}
+              >
+                {waitlistStatus === "loading" ? "Joining…" : "Request access →"}
+              </button>
+            </form>
+          )}
+
+          {(waitlistStatus === "duplicate") && (
+            <p style={{ fontSize: "0.82rem", color: "rgba(255,150,150,0.8)", marginTop: "-8px" }}>
+              That email is already on the waitlist.
+            </p>
+          )}
+          {waitlistStatus === "error" && (
+            <p style={{ fontSize: "0.82rem", color: "rgba(255,150,150,0.8)", marginTop: "-8px" }}>
+              Something went wrong — please try again.
+            </p>
+          )}
+
+          <Link href="/demo" className="btn-pill btn-ghost" style={{ marginTop: "4px" }}>
+            Watch demo
+          </Link>
         </div>
       </section>
 
       {/* ─── FOOTER ───────────────────────────────────────── */}
       <footer
         className="flex items-center justify-between border-t"
-        style={{ borderColor: "rgba(45,255,192,0.08)", padding: "28px 48px" }}
+        style={{ borderColor: "rgba(45,255,192,0.08)", padding: isMobile ? "20px 20px" : "28px 48px" }}
       >
         <span style={{ fontSize: "1.1rem", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--aqua)" }}>
           cue.

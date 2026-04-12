@@ -206,5 +206,34 @@ export async function askSessionQuestion(
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? `session QA failed: ${res.statusText}`);
   }
+// ---------------------------------------------------------------------------
+// Practice Mode
+// ---------------------------------------------------------------------------
+
+export interface PracticeNudge {
+  trigger: string;
+  text: string;
+  value: number;
+}
+
+export interface PracticeAnalyzeResult {
+  score: number;
+  nudges: PracticeNudge[];
+  filler_words_found: string[];
+  wpm: number;
+}
+
+export async function analyzePracticeDrill(opts: {
+  transcript: string;
+  words_per_minute: number;
+  filler_word_count: number;
+  duration_seconds: number;
+}): Promise<PracticeAnalyzeResult> {
+  const res = await fetch(`${BASE_URL}/practice/analyze`, {
+    method: "POST",
+    headers: { ...headers(), "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (!res.ok) throw new Error(`analyzePracticeDrill failed: ${res.statusText}`);
   return res.json();
 }

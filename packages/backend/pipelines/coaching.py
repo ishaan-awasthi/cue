@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import deque
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
@@ -33,6 +34,14 @@ SendBytesCallback = Callable[[bytes], Awaitable[None]]
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+# Keyword-triggered nudges — fire immediately on transcript match
+_KEYWORD_RULES: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r'\bliterally\b', re.IGNORECASE),              "keyword_literally", "Cut filler words"),
+    (re.compile(r'\bslow(?:ly|er|est|ing|ed)?\b', re.IGNORECASE), "keyword_slow",      "Pick up the pace"),
+    (re.compile(r'\bquick(?:ly|er|est)?\b', re.IGNORECASE),    "keyword_quick",     "Slow down"),
+    (re.compile(r'\bloud(?:ly|er|est)?\b', re.IGNORECASE),     "keyword_loud",      "Watch your volume"),
+]
 
 SIGNAL_WINDOW_SECONDS = 5
 MIN_WPM = 20.0
@@ -110,6 +119,14 @@ class CoachingPipeline:
             "audience_signal",
             signal.model_dump(mode="json"),
         )
+
+    async def on_transcript_chunk(self, chunk: str) -> None:
+        for pattern, trigger_signal, text in _KEYWORD_RULES:
+            if pattern.search(chunk):
+                nudge = self._make_nudge(text, trigger_signal, 0.0)
+                if nudge:
+                    asyncio.create_task(self._fire_nudge(nudge))
+                break  # one nudge per chunk
 
     async def stop(self) -> None:
         self._running = False
