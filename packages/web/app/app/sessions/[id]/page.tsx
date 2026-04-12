@@ -12,6 +12,7 @@ import {
   createSession,
   endSession,
   sessionWebSocketUrl,
+  listSessionFiles,
   type Session,
   type CoachingReport,
   type ChatMessage,
@@ -117,6 +118,7 @@ export default function SessionDetailPage() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [inProgressTab, setInProgressTab] = useState<InProgressTab>("chat");
   const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [sessionFiles, setSessionFiles] = useState<UploadedFile[]>([]);
   const [isLive, setIsLive] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -193,18 +195,55 @@ export default function SessionDetailPage() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setPhase("prep");
+    setReport(null);
+    setEvents([]);
+    setSessionFiles([]);
+    setLiveError(null);
     getSession(sessionId)
       .then((s) => {
+        if (!active) return null;
         setSession(s ?? mockSession(sessionId));
         if (s?.ended_at) setPhase("ratings");
         return s?.id ? getSessionEvents(sessionId) : [];
       })
-      .then((evts) => setEvents(evts))
+      .then((evts) => {
+        if (!active || !evts) return;
+        setEvents(evts);
+      })
       .catch(() => {
+        if (!active) return;
         setSession(mockSession(sessionId));
         setEvents([]);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!active) return;
+        setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const files = await listSessionFiles(sessionId);
+        if (mounted) setSessionFiles(files);
+      } catch {
+        if (mounted) setSessionFiles([]);
+      }
+    };
+    refresh();
+    const id = window.setInterval(refresh, 2500);
+    return () => {
+      mounted = false;
+      window.clearInterval(id);
+    };
   }, [sessionId]);
 
   useEffect(() => {
@@ -232,7 +271,9 @@ export default function SessionDetailPage() {
     [events]
   );
 
-  const handleUploaded = (_file: UploadedFile) => {};
+  const handleUploaded = (file: UploadedFile) => {
+    setSessionFiles((prev) => [file, ...prev.filter((f) => f.id !== file.id)]);
+  };
 
   const handleSendMessage = async () => {
     const trimmed = chatInput.trim();
@@ -306,7 +347,19 @@ export default function SessionDetailPage() {
                 Context for your session
               </p>
               <div className="feature-card" style={{ padding: "16px" }}>
-                <FileUploader onUploaded={handleUploaded} />
+                <FileUploader onUploaded={handleUploaded} sessionId={sessionId} />
+                {sessionFiles.length > 0 && (
+                  <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {sessionFiles.map((f) => (
+                      <div key={f.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "0.78rem", color: "rgba(240,245,243,0.7)" }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.filename}</span>
+                        <span style={{ flexShrink: 0, color: f.processing_status === "failed" ? "#f87171" : "rgba(45,255,192,0.9)" }}>
+                          {f.processing_status === "ready" ? `${f.chunk_count} chunks ready` : f.processing_status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </section>
 
@@ -569,7 +622,7 @@ export default function SessionDetailPage() {
                 <p style={{ fontSize: "0.875rem", lineHeight: 1.7, color: "rgba(240,245,243,0.4)" }}>
                   Complete a session with your Cue glasses to see filler words, speaking speed, audience retention, and overall rating here.
                 </p>
-                <Link href={`/sessions/${sessionId}`} style={{ fontSize: "0.875rem", color: "var(--aqua)", marginTop: "8px" }}>
+                <Link href={`/app/sessions/${sessionId}`} style={{ fontSize: "0.875rem", color: "var(--aqua)", marginTop: "8px" }}>
                   View session details →
                 </Link>
               </div>
@@ -617,8 +670,8 @@ export default function SessionDetailPage() {
 
                 {report && (
                   <div style={{ display: "flex", gap: "16px", paddingTop: "4px" }}>
-                    <Link href={`/sessions/${sessionId}/report`} style={{ fontSize: "0.875rem", color: "var(--aqua)", fontWeight: 600 }}>Full report →</Link>
-                    <Link href={`/sessions/${sessionId}`} style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)", transition: "color 0.15s" }}>Transcript & charts</Link>
+                    <Link href={`/app/sessions/${sessionId}/report`} style={{ fontSize: "0.875rem", color: "var(--aqua)", fontWeight: 600 }}>Full report →</Link>
+                    <Link href={`/app/sessions/${sessionId}`} style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)", transition: "color 0.15s" }}>Transcript & charts</Link>
                   </div>
                 )}
               </>

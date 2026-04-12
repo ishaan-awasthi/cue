@@ -6,7 +6,10 @@ Routes:
   GET    /sessions/{id}                — session detail
   GET    /sessions                     — list sessions for a user
   POST   /sessions/{id}/report         — run post-session deep analysis
-  POST   /files/upload                 — ingest a reference file into pgvector
+  POST   /files/upload                 — ingest a reference file (legacy, user-scoped)
+  POST   /sessions/{id}/files          — ingest a session-scoped reference file
+  GET    /sessions/{id}/files          — list session files
+  POST   /sessions/{id}/qa             — synchronous grounded Q&A for session
   DELETE /files/{id}                   — remove file and its chunks
   GET    /files                        — list uploaded files for a user
 """
@@ -161,16 +164,52 @@ async def session_chat(
     return {"reply": reply}
 
 
+class SessionQARequest(BaseModel):
+    question: str
+
+
+@app.post("/sessions/{session_id}/qa")
+async def session_qa(
+    session_id: str,
+    body: SessionQARequest,
+    user_id: str = Depends(get_user_id),
+):
+    session = await asyncio_to_thread(queries.get_session, session_id)
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    question = (body.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    files = await asyncio_to_thread(queries.list_files, user_id, session_id)
+    has_ready = any(f.processing_status == "ready" for f in files)
+    if files and not has_ready:
+        return {
+            "answer": "Your session documents are still processing. Ask again in a moment.",
+            "source": "llm_fallback",
+            "confidence": 0.0,
+            "supporting_context": [],
+            "status": "processing",
+        }
+
+    result = await rag.answer_question(user_id=user_id, question=question, session_id=session_id)
+    return {
+        "answer": result.answer,
+        "source": result.source,
+        "confidence": round(result.confidence, 4),
+        "supporting_context": result.supporting_context,
+        "status": "ready",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Post-session report
 # ---------------------------------------------------------------------------
 
 @app.post("/sessions/{session_id}/report")
 async def generate_report(session_id: str, user_id: str = Depends(get_user_id)):
-    """Run Claude Sonnet + fluency model over the full session and return a
-    structured coaching report."""
-    from openai import AsyncOpenAI
-
+    """Run Claude/GPT over the full session and return a structured coaching report."""
     session = await asyncio_to_thread(queries.get_session, session_id)
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -204,8 +243,14 @@ async def generate_report(session_id: str, user_id: str = Depends(get_user_id)):
     qa_summary = [
         {
             "question": e.payload.get("question_text"),
+            "answer": e.payload.get("answer_text"),
             "whispered": e.payload.get("whispered"),
             "similarity": e.payload.get("similarity_score"),
+            "confidence": e.payload.get("confidence", 0),
+            "sources_used": e.payload.get("sources_used", []),
+            "fallback_used": e.payload.get("fallback_used", False),
+            "source": e.payload.get("source", "llm_fallback"),
+            "supporting_context": e.payload.get("supporting_context", []),
             "timestamp": e.timestamp.isoformat(),
         }
         for e in qa_events
@@ -227,13 +272,8 @@ Q&A events: {json.dumps(qa_summary)}
 
 Respond with valid JSON only — no markdown fences."""
 
-    openai = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    response = await openai.chat.completions.create(
-        model="gpt-4o",
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = (response.choices[0].message.content or "").strip()
+    reply = await rag._chat_complete(prompt, max_tokens=1500)
+    raw = reply.strip()
     try:
         report = json.loads(raw)
     except json.JSONDecodeError:
@@ -264,49 +304,159 @@ def _summarise_fluency(audio_events) -> dict:
 # File management
 # ---------------------------------------------------------------------------
 
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+ALLOWED_EXT = {".pdf", ".pptx", ".docx", ".txt", ".md"}
+ALLOWED_MIME_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+    "text/markdown",
+}
+
+
+def _extract_ext(filename: str | None) -> str:
+    if not filename or "." not in filename:
+        return ""
+    return "." + filename.rsplit(".", 1)[-1].lower()
+
+
+def _validate_upload(file: UploadFile, content: bytes) -> tuple[str, str | None]:
+    ext = _extract_ext(file.filename)
+    mime = file.content_type
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext or 'unknown'}")
+    if mime and mime not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported mime type: {mime}")
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail=f"File too large. Max size is {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
+    return ext.lstrip("."), mime
+
+
+async def _process_uploaded_file(
+    *,
+    db_file_id: str,
+    user_id: str,
+    filename: str,
+    file_type: str,
+    content: bytes,
+) -> None:
+    try:
+        await asyncio_to_thread(queries.update_file_status, db_file_id, "parsing", None, None)
+        chunk_count = await rag.ingest_file(
+            file_id=db_file_id,
+            user_id=user_id,
+            filename=filename,
+            file_type=file_type,
+            content=content,
+        )
+        if chunk_count <= 0:
+            await asyncio_to_thread(
+                queries.update_file_status,
+                db_file_id,
+                "failed",
+                0,
+                "No extractable text or embedding failure",
+            )
+            return
+
+        await asyncio_to_thread(queries.update_file_status, db_file_id, "embedded", chunk_count, None)
+        await asyncio_to_thread(queries.update_file_status, db_file_id, "ready", chunk_count, None)
+    except Exception as exc:
+        await asyncio_to_thread(
+            queries.update_file_status,
+            db_file_id,
+            "failed",
+            None,
+            str(exc),
+        )
+
+
 @app.post("/files/upload", response_model=UploadedFile, status_code=201)
 async def upload_file(
     file: UploadFile = File(...),
     user_id: str = Depends(get_user_id),
 ):
-    allowed_types = {"application/pdf", "application/vnd.openxmlformats-officedocument."
-                     "presentationml.presentation",
-                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                     "text/plain", "text/markdown"}
-    # Also allow by extension
-    allowed_ext = {".pdf", ".pptx", ".docx", ".txt", ".md"}
-    ext = "." + (file.filename or "").rsplit(".", 1)[-1].lower()
-    if ext not in allowed_ext:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+    content = await file.read()
+    file_type, mime_type = _validate_upload(file, content)
+    filename = file.filename or "upload"
+    db_file = await asyncio_to_thread(
+        queries.insert_file,
+        user_id,
+        filename,
+        file_type,
+        mime_type,
+        None,
+    )
+    asyncio.create_task(
+        _process_uploaded_file(
+            db_file_id=db_file.id,
+            user_id=user_id,
+            filename=filename,
+            file_type=file_type,
+            content=content,
+        )
+    )
+    return db_file
+
+
+@app.post("/sessions/{session_id}/files", response_model=UploadedFile, status_code=201)
+async def upload_session_file(
+    session_id: str,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_user_id),
+):
+    session = await asyncio_to_thread(queries.get_session, session_id)
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     content = await file.read()
-    file_type = ext.lstrip(".")
-
-    # Create DB record
-    db_file = await asyncio_to_thread(queries.insert_file, user_id, file.filename or "upload", file_type)
-
-    # Ingest asynchronously (embed + store chunks)
-    chunk_count = await rag.ingest_file(
-        file_id=db_file.id,
-        user_id=user_id,
-        filename=file.filename or "upload",
-        file_type=file_type,
-        content=content,
+    file_type, mime_type = _validate_upload(file, content)
+    filename = file.filename or "upload"
+    db_file = await asyncio_to_thread(
+        queries.insert_file,
+        user_id,
+        filename,
+        file_type,
+        mime_type,
+        session_id,
     )
-
-    # Return updated record
-    db_file.chunk_count = chunk_count
+    asyncio.create_task(
+        _process_uploaded_file(
+            db_file_id=db_file.id,
+            user_id=user_id,
+            filename=filename,
+            file_type=file_type,
+            content=content,
+        )
+    )
     return db_file
 
 
 @app.delete("/files/{file_id}", status_code=204)
 async def delete_file(file_id: str, user_id: str = Depends(get_user_id)):
-    await asyncio_to_thread(queries.delete_file, file_id)
+    try:
+        db_file = await asyncio_to_thread(queries.get_file, file_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found") from None
+    if db_file.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await asyncio_to_thread(queries.delete_file, file_id, user_id)
 
 
 @app.get("/files", response_model=list[UploadedFile])
 async def list_files(user_id: str = Depends(get_user_id)):
     return await asyncio_to_thread(queries.list_files, user_id)
+
+
+@app.get("/sessions/{session_id}/files", response_model=list[UploadedFile])
+async def list_session_files(session_id: str, user_id: str = Depends(get_user_id)):
+    session = await asyncio_to_thread(queries.get_session, session_id)
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return await asyncio_to_thread(queries.list_files, user_id, session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -475,5 +625,5 @@ def _compute_overall_score(metrics: dict[str, float]) -> float:
 # Utility
 # ---------------------------------------------------------------------------
 
-async def asyncio_to_thread(fn, *args):
-    return await asyncio.to_thread(fn, *args)
+async def asyncio_to_thread(fn, *args, **kwargs):
+    return await asyncio.to_thread(fn, *args, **kwargs)

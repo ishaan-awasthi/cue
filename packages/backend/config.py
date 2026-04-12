@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     # Q&A pipeline
     QA_MATCH_THRESHOLD: float = 0.75
     QA_SILENCE_TIMEOUT_SECONDS: int = 4
+    QUESTION_CAPTURE_WINDOW_SECONDS: float = 3.0
+    QA_MIN_CHUNK_SIMILARITY: float = 0.35
+
+    # Chat completions (RAG answers, report generation)
+    # Anthropic takes priority over OpenRouter/OpenAI
+    ANTHROPIC_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
 
 
 settings = Settings()

@@ -33,7 +33,7 @@ export default function SessionDetailPage() {
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState<number>(0);
-  const [activeTab, setActiveTab] = useState<"transcript" | "nudges" | "charts">("transcript");
+  const [activeTab, setActiveTab] = useState<"transcript" | "nudges" | "charts" | "qa">("transcript");
 
   useEffect(() => {
     async function load() {
@@ -80,7 +80,7 @@ export default function SessionDetailPage() {
         <div className="flex-1 min-w-0">
           {/* Tabs */}
           <div className="flex" style={{ gap: 0, marginBottom: "24px", borderBottom: "1px solid rgba(45,255,192,0.1)" }}>
-            {(["transcript", "nudges", "charts"] as const).map((tab) => (
+            {(["transcript", "nudges", "charts", "qa"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -138,6 +138,12 @@ export default function SessionDetailPage() {
               <AttentionHeatmap data={attentionSeries} />
             </div>
           )}
+
+          {activeTab === "qa" && (
+            <div className="feature-card" style={{ padding: "20px" }}>
+              <QATab events={events} sessionStartedAt={session.started_at} />
+            </div>
+          )}
         </div>
 
         {/* Sidebar stats */}
@@ -188,6 +194,64 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="flex items-baseline justify-between" style={{ gap: "8px" }}>
       <span style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600 }}>{label}</span>
       <span style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--fg)" }}>{value}</span>
+    </div>
+  );
+}
+
+function QATab({ events, sessionStartedAt }: { events: SessionEvent[]; sessionStartedAt: string }) {
+  const qaEvents = events.filter((e) => e.event_type === "qa_event");
+  if (qaEvents.length === 0) {
+    return <p style={{ color: "rgba(240,245,243,0.5)", fontSize: "0.875rem" }}>No Q&A events in this session.</p>;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      {qaEvents.map((e) => {
+        const payload = e.payload as Record<string, unknown>;
+        const question = (payload.question_text as string) ?? "";
+        const answer = (payload.answer_text as string) ?? "";
+        const whispered = Boolean(payload.whispered);
+        const confidence = Number(payload.confidence ?? 0);
+        const fallbackUsed = Boolean(payload.fallback_used);
+        const sources = (payload.sources_used as string[]) ?? [];
+        const ts = e.timestamp;
+        return (
+          <div
+            key={e.id}
+            style={{
+              padding: "16px",
+              border: "1px solid rgba(45,255,192,0.15)",
+              borderRadius: "8px",
+              background: "rgba(45,255,192,0.03)",
+            }}
+          >
+            <div style={{ fontSize: "0.7rem", color: "rgba(240,245,243,0.4)", marginBottom: "8px" }}>
+              {format(new Date(ts), "HH:mm:ss")}
+            </div>
+            <p style={{ fontWeight: 600, marginBottom: "6px" }}>{question}</p>
+            <p style={{ fontSize: "0.9rem", color: "rgba(240,245,243,0.8)", marginBottom: "10px" }}>{answer}</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+              {whispered && (
+                <span style={{ fontSize: "0.65rem", padding: "2px 8px", background: "var(--aqua)", color: "var(--bg)", borderRadius: "4px", fontWeight: 600 }}>
+                  Whispered
+                </span>
+              )}
+              <span style={{ fontSize: "0.7rem", color: "rgba(240,245,243,0.5)" }}>
+                Confidence: {Math.round(confidence * 100)}%
+              </span>
+              {fallbackUsed && (
+                <span style={{ fontSize: "0.65rem", padding: "2px 8px", background: "rgba(255,180,0,0.2)", color: "rgba(255,180,0,0.9)", borderRadius: "4px" }}>
+                  GPT fallback
+                </span>
+              )}
+              {sources.length > 0 && (
+                <span style={{ fontSize: "0.7rem", color: "rgba(240,245,243,0.5)" }}>
+                  Sources: {sources.join(", ")}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

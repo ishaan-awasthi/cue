@@ -4,15 +4,17 @@ Two responsibilities:
 1. File ingestion: extract text from uploaded files, chunk it (~500 tokens),
    embed with OpenAI text-embedding-3-small, store in Supabase pgvector.
 2. Q&A retrieval: embed an incoming question, similarity-search pgvector,
-   pass question + top-3 chunks to Claude Haiku, return a concise answer.
+   pass question + top chunks to chat model (Anthropic > OpenRouter > OpenAI),
+   return RAGResult with answer, confidence, sources, fallback flag.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
-import re
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any
 
 import tiktoken
 from openai import AsyncOpenAI
@@ -24,20 +26,45 @@ from ..db.models import DocumentChunk
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RAGResult:
+    answer: str
+    confidence: float
+    sources_used: list[str]
+    fallback_used: bool
+    source: str
+    supporting_context: list[dict[str, str]]
+
+
+# ---------------------------------------------------------------------------
 # Clients (lazily shared)
 # ---------------------------------------------------------------------------
 
 _openai: AsyncOpenAI | None = None
+_anthropic_client = None
+_chat_client = None
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
 
-QA_MODEL = "gpt-4o-mini"
-
 CHUNK_TOKENS = 500
 CHUNK_OVERLAP = 50  # token overlap between adjacent chunks
 
-_TOKENIZER = tiktoken.get_encoding("cl100k_base")
+_TOKENIZER = None
+
+
+def _get_tokenizer():
+    global _TOKENIZER
+    if _TOKENIZER is not None:
+        return _TOKENIZER
+    try:
+        _TOKENIZER = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        _TOKENIZER = False
+    return _TOKENIZER
 
 
 def _get_openai() -> AsyncOpenAI:
@@ -47,15 +74,68 @@ def _get_openai() -> AsyncOpenAI:
     return _openai
 
 
+def _get_anthropic():
+    """Lazy init Anthropic client when ANTHROPIC_API_KEY is set."""
+    global _anthropic_client
+    if _anthropic_client is None and settings.ANTHROPIC_API_KEY:
+        from anthropic import AsyncAnthropic
+        _anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    return _anthropic_client
+
+
+def _get_chat_client():
+    """OpenRouter or OpenAI for chat when Anthropic not used."""
+    global _chat_client
+    if _chat_client is None:
+        if settings.OPENROUTER_API_KEY:
+            _chat_client = ("openrouter", AsyncOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=settings.OPENROUTER_API_KEY,
+            ))
+        else:
+            _chat_client = ("openai", _get_openai())
+    return _chat_client
+
+
 # ---------------------------------------------------------------------------
-# Embedding helpers
+# Chat completion — single entry point; priority: Anthropic > OpenRouter > OpenAI
+# ---------------------------------------------------------------------------
+
+async def _chat_complete(prompt: str, max_tokens: int = 150) -> str:
+    """Generate completion. Uses Anthropic if set, else OpenRouter, else OpenAI."""
+    anthropic = _get_anthropic()
+    if anthropic:
+        try:
+            msg = await anthropic.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if msg.content and len(msg.content) > 0:
+                block = msg.content[0]
+                if hasattr(block, "text"):
+                    return block.text.strip()
+            return ""
+        except Exception as exc:
+            logger.warning("Anthropic chat failed, falling back: %s", exc)
+
+    provider, client = _get_chat_client()
+    model = "openai/gpt-4o-mini" if provider == "openrouter" else "gpt-4o-mini"
+    resp = await client.chat.completions.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Embedding helpers (OpenAI only)
 # ---------------------------------------------------------------------------
 
 async def embed_text(text: str) -> list[float]:
     """Return a 1536-dim embedding for *text* using OpenAI."""
-    # print(f"[rag] Embedding text ({len(text)} chars) via {EMBEDDING_MODEL}...")
     resp = await _get_openai().embeddings.create(model=EMBEDDING_MODEL, input=text)
-    # print(f"[rag] Embedding complete ({EMBEDDING_DIM} dims)")
     return resp.data[0].embedding
 
 
@@ -70,139 +150,265 @@ async def ingest_file(
     file_type: str,
     content: bytes,
 ) -> int:
-    """Extract, chunk, embed, and store the file. Returns chunk count."""
-    # print(f"[rag] Ingesting file: {filename} ({len(content)} bytes, type={file_type})")
-    text = _extract_text(filename, file_type, content)
-    if not text.strip():
-        # print(f"[rag] No text extracted from {filename}")
+    """Extract, chunk, embed, and store the file. Returns chunk count. Returns 0 on embedding failure (no 500)."""
+    try:
+        sections = _extract_sections(filename, file_type, content)
+        if not sections:
+            return 0
+
+        chunks = _chunk_sections(sections)
+        stored = 0
+        for idx, chunk in enumerate(chunks):
+            try:
+                embedding = await embed_text(chunk["text"])
+            except Exception as exc:
+                logger.warning("Embedding failed for chunk %d of %s: %s", idx + 1, filename, exc)
+                continue
+            queries.insert_chunk(
+                file_id=file_id,
+                user_id=user_id,
+                chunk_text=chunk["text"],
+                chunk_index=idx,
+                embedding_vector=embedding,
+                metadata=chunk["metadata"],
+            )
+            stored += 1
+
+        logger.info("Ingested %d chunks for file %s", stored, filename)
+        return stored
+    except Exception as exc:
+        logger.error("File ingestion failed for %s: %s", filename, exc)
         return 0
 
-    chunks = _chunk_text(text)
-    # print(f"[rag] Split into {len(chunks)} chunks (~{CHUNK_TOKENS} tokens each)")
-    for idx, chunk in enumerate(chunks):
-        # print(f"[rag] Embedding chunk {idx + 1}/{len(chunks)}...")
-        embedding = await embed_text(chunk)
-        queries.insert_chunk(
-            file_id=file_id,
-            user_id=user_id,
-            chunk_text=chunk,
-            chunk_index=idx,
-            embedding_vector=embedding,
-        )
 
-    # chunk_count is maintained by increment_chunk_count() called inside insert_chunk()
-
-    logger.info("Ingested %d chunks for file %s", len(chunks), filename)
-    # print(f"[rag] Ingestion complete: {len(chunks)} chunks stored for {filename}")
-    return len(chunks)
-
-
-def _extract_text(filename: str, file_type: str, content: bytes) -> str:
-    """Dispatch to the right extractor based on file type."""
+def _extract_sections(filename: str, file_type: str, content: bytes) -> list[dict[str, Any]]:
+    """Return extraction units with best-effort location metadata."""
     ft = file_type.lower().lstrip(".")
     name_lower = filename.lower()
 
     if ft in ("pdf",) or name_lower.endswith(".pdf"):
-        return _extract_pdf(content)
+        return _extract_pdf_sections(content)
     if ft in ("pptx",) or name_lower.endswith(".pptx"):
-        return _extract_pptx(content)
+        return _extract_pptx_sections(content)
     if ft in ("docx",) or name_lower.endswith(".docx"):
-        return _extract_docx(content)
+        return _extract_docx_sections(content)
     if ft in ("md", "markdown") or name_lower.endswith(".md"):
-        return content.decode("utf-8", errors="replace")
-    # Plain text fallback
-    return content.decode("utf-8", errors="replace")
+        text = content.decode("utf-8", errors="replace").strip()
+        return [{"text": text, "metadata": {"section": "markdown"}}] if text else []
+    text = content.decode("utf-8", errors="replace").strip()
+    return [{"text": text, "metadata": {"section": "text"}}] if text else []
 
 
-def _extract_pdf(content: bytes) -> str:
+def _extract_pdf_sections(content: bytes) -> list[dict[str, Any]]:
     from pypdf import PdfReader
     reader = PdfReader(io.BytesIO(content))
-    parts = []
-    for page in reader.pages:
+    sections: list[dict[str, Any]] = []
+    for idx, page in enumerate(reader.pages):
         text = page.extract_text()
-        if text:
-            parts.append(text)
-    return "\n\n".join(parts)
+        if text and text.strip():
+            sections.append({
+                "text": text.strip(),
+                "metadata": {"page_number": idx + 1, "location": f"Page {idx + 1}"},
+            })
+    return sections
 
 
-def _extract_pptx(content: bytes) -> str:
+def _extract_pptx_sections(content: bytes) -> list[dict[str, Any]]:
     from pptx import Presentation
     prs = Presentation(io.BytesIO(content))
-    parts = []
-    for slide in prs.slides:
+    sections: list[dict[str, Any]] = []
+    for slide_idx, slide in enumerate(prs.slides):
+        parts: list[str] = []
         for shape in slide.shapes:
             if shape.has_text_frame:
                 for para in shape.text_frame.paragraphs:
                     text = " ".join(run.text for run in para.runs).strip()
                     if text:
                         parts.append(text)
-    return "\n\n".join(parts)
+        merged = "\n".join(parts).strip()
+        if merged:
+            sections.append({
+                "text": merged,
+                "metadata": {"slide_number": slide_idx + 1, "location": f"Slide {slide_idx + 1}"},
+            })
+    return sections
 
 
-def _extract_docx(content: bytes) -> str:
+def _extract_docx_sections(content: bytes) -> list[dict[str, Any]]:
     from docx import Document
     doc = Document(io.BytesIO(content))
-    return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    sections: list[dict[str, Any]] = []
+    current_section = "Document"
+    for p in doc.paragraphs:
+        text = (p.text or "").strip()
+        if not text:
+            continue
+        if p.style and p.style.name and "heading" in p.style.name.lower():
+            current_section = text
+            continue
+        sections.append({
+            "text": text,
+            "metadata": {"section": current_section, "location": f"Section: {current_section}"},
+        })
+    return sections
 
 
-def _chunk_text(text: str) -> list[str]:
-    """Split *text* into ~CHUNK_TOKENS-token chunks with CHUNK_OVERLAP overlap."""
-    tokens = _TOKENIZER.encode(text)
+def _chunk_text_with_overlap(text: str) -> list[str]:
+    tokenizer = _get_tokenizer()
+    if tokenizer is False:
+        # Offline fallback when tokenizer assets are unavailable.
+        words = text.split()
+        if not words:
+            return []
+        max_words = 350
+        overlap = 40
+        chunks: list[str] = []
+        start = 0
+        while start < len(words):
+            end = min(start + max_words, len(words))
+            chunks.append(" ".join(words[start:end]))
+            if end == len(words):
+                break
+            start += max_words - overlap
+        return chunks
+
+    tokens = tokenizer.encode(text)
     chunks: list[str] = []
     start = 0
     while start < len(tokens):
         end = min(start + CHUNK_TOKENS, len(tokens))
         chunk_tokens = tokens[start:end]
-        chunks.append(_TOKENIZER.decode(chunk_tokens))
+        chunks.append(tokenizer.decode(chunk_tokens))
         if end == len(tokens):
             break
         start += CHUNK_TOKENS - CHUNK_OVERLAP
     return chunks
 
 
+def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    for section in sections:
+        text = str(section.get("text", "")).strip()
+        metadata = dict(section.get("metadata") or {})
+        if not text:
+            continue
+        for part_idx, chunk_text in enumerate(_chunk_text_with_overlap(text)):
+            merged_metadata = dict(metadata)
+            merged_metadata["chunk_part"] = part_idx
+            chunks.append({"text": chunk_text, "metadata": merged_metadata})
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# RAG helpers
+# ---------------------------------------------------------------------------
+
+def _deduplicated_sources(chunks: list[DocumentChunk]) -> list[str]:
+    """Unique ordered filenames from chunk list."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for c in chunks:
+        fn = (c.filename or "").strip()
+        if fn and fn not in seen:
+            seen.add(fn)
+            result.append(fn)
+    return result
+
+
+async def _retrieve_chunks(user_id: str, embedding: list[float], top_k: int = 5) -> list[DocumentChunk]:
+    return await asyncio.to_thread(queries.similarity_search, user_id, embedding, top_k)
+
+
 # ---------------------------------------------------------------------------
 # Q&A retrieval
 # ---------------------------------------------------------------------------
 
-async def answer_question(user_id: str, question: str) -> str:
-    """Embed question, retrieve top-3 chunks, generate a whisper-ready answer."""
+async def _gpt_fallback(question: str) -> RAGResult:
+    """Answer without RAG context when chunks are missing or below threshold."""
+    prompt = (
+        f"You are a real-time presentation coach whispering a brief answer into the "
+        f"speaker's earpiece. Answer this audience question in 1-3 concise sentences. "
+        f"Do not use filler phrases — speak naturally.\n\n"
+        f"Audience question: {question}\n\nAnswer:"
+    )
     try:
-        # print(f"[rag] answer_question: \"{question}\" for user {user_id}")
-        query_embedding = await embed_text(question)
-        chunks: list[DocumentChunk] = await _retrieve_chunks(user_id, query_embedding)
-
-        if not chunks:
-            # print(f"[rag] No matching chunks found — no answer generated")
-            return ""
-
-        # print(f"[rag] Retrieved {len(chunks)} chunk(s) from pgvector")
-
-        context = "\n\n---\n\n".join(c.chunk_text for c in chunks)
-        prompt = (
-            f"You are a real-time presentation coach whispering a brief answer into the "
-            f"speaker's earpiece. Based only on the reference material below, answer the "
-            f"audience question in 1-3 concise sentences. Do not say 'based on the material' "
-            f"or use filler phrases — speak naturally as if you know the answer.\n\n"
-            f"Reference material:\n{context}\n\n"
-            f"Audience question: {question}\n\n"
-            f"Answer:"
+        answer = await _chat_complete(prompt, max_tokens=150)
+        return RAGResult(
+            answer=answer,
+            confidence=0.0,
+            sources_used=[],
+            fallback_used=True,
+            source="llm_fallback",
+            supporting_context=[],
         )
-
-        # print(f"[rag] Calling {QA_MODEL} for answer generation...")
-        resp = await _get_openai().chat.completions.create(
-            model=QA_MODEL,
-            max_tokens=150,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        answer = (resp.choices[0].message.content or "").strip()
-        # print(f"[rag] Generated answer: \"{answer}\"")
-        return answer
     except Exception as exc:
-        logger.error("RAG answer_question failed: %s", exc)
-        # print(f"[rag] ERROR in answer_question: {exc}")
-        return ""
+        logger.error("GPT fallback failed: %s", exc)
+        return RAGResult(
+            answer="",
+            confidence=0.0,
+            sources_used=[],
+            fallback_used=True,
+            source="llm_fallback",
+            supporting_context=[],
+        )
 
 
-async def _retrieve_chunks(user_id: str, embedding: list[float]) -> list[DocumentChunk]:
-    import asyncio
-    return await asyncio.to_thread(queries.similarity_search, user_id, embedding, 3)
+def _build_supporting_context(chunks: list[DocumentChunk]) -> list[dict[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, str]] = []
+    for chunk in chunks:
+        filename = (chunk.filename or "").strip()
+        md = chunk.metadata or {}
+        location = str(md.get("location") or md.get("section") or f"Chunk {chunk.chunk_index}")
+        key = (filename, location)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"fileName": filename or "uploaded file", "location": location})
+        if len(out) >= 3:
+            break
+    return out
+
+
+async def answer_question(user_id: str, question: str, session_id: str | None = None) -> RAGResult:
+    """Embed question, retrieve chunks, filter by QA_MIN_CHUNK_SIMILARITY, generate answer.
+    Falls back to GPT-only when no chunks pass threshold or embedding fails."""
+    try:
+        query_embedding = await embed_text(question)
+    except Exception as exc:
+        logger.error("Embedding failed in answer_question: %s", exc)
+        return await _gpt_fallback(question)
+
+    chunks = await asyncio.to_thread(queries.similarity_search, user_id, query_embedding, 5, session_id)
+    min_sim = settings.QA_MIN_CHUNK_SIMILARITY
+    usable = [c for c in chunks if (c.similarity or 0) >= min_sim]
+
+    if not usable:
+        return await _gpt_fallback(question)
+
+    confidence = usable[0].similarity or 0.0
+    sources = _deduplicated_sources(usable)
+    supporting_context = _build_supporting_context(usable)
+    context = "\n\n---\n\n".join(c.chunk_text for c in usable)
+    prompt = (
+        f"You are a real-time presentation coach whispering a brief answer into the "
+        f"speaker's earpiece. Based only on the reference material below, answer the "
+        f"audience question in 1-2 concise sentences for a live VC meeting. Keep it direct, "
+        f"confident, and practical. Do not say 'based on the material' or use filler phrases.\n\n"
+        f"Reference material:\n{context}\n\n"
+        f"Audience question: {question}\n\nAnswer:"
+    )
+
+    try:
+        answer = await _chat_complete(prompt, max_tokens=150)
+        return RAGResult(
+            answer=answer.strip(),
+            confidence=confidence,
+            sources_used=sources,
+            fallback_used=False,
+            source="session_docs",
+            supporting_context=supporting_context,
+        )
+    except Exception as exc:
+        logger.error("RAG chat failed: %s", exc)
+        return await _gpt_fallback(question)
