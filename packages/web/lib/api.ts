@@ -159,6 +159,38 @@ export async function deleteFile(fileId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Transcript analysis
+// ---------------------------------------------------------------------------
+
+export interface TranscriptIndicator {
+  label: string;
+  score: number;        // 0–100
+  value: string;        // e.g. "3.2/min (12 total)"
+  blurb: string;
+}
+
+export interface TranscriptAnalysisResult {
+  session_id: string;
+  transcript_found: boolean;
+  transcript_length: number;
+  word_count: number;
+  duration_estimate_seconds: number;
+  indicators: TranscriptIndicator[];
+  overall_score: number;
+  filler_words_detail: Record<string, number>;
+  transcript_excerpt: string;
+}
+
+export async function getTranscriptAnalysis(sessionId: string): Promise<TranscriptAnalysisResult> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/transcript-analysis`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`transcript-analysis failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Practice drill analysis
 // ---------------------------------------------------------------------------
 

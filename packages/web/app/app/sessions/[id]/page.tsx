@@ -8,11 +8,14 @@ import {
   getSession,
   getSessionEvents,
   getSessionReport,
+  getTranscriptAnalysis,
   sendChatMessage,
   type Session,
   type CoachingReport,
   type ChatMessage,
   type SessionEvent,
+  type TranscriptAnalysisResult,
+  type TranscriptIndicator,
 } from "../../../../lib/api";
 import FileUploader from "../../../../components/FileUploader";
 import MetricsChart from "../../../../components/MetricsChart";
@@ -112,6 +115,8 @@ export default function SessionDetailPage() {
   const [chatInput, setChatInput] = useState("");
   const [report, setReport] = useState<CoachingReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [transcriptAnalysis, setTranscriptAnalysis] = useState<TranscriptAnalysisResult | null>(null);
+  const [transcriptAnalysisLoading, setTranscriptAnalysisLoading] = useState(false);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [inProgressTab, setInProgressTab] = useState<InProgressTab>("chat");
@@ -141,7 +146,14 @@ export default function SessionDetailPage() {
         .catch(() => setReport(null))
         .finally(() => setReportLoading(false));
     }
-  }, [phase, session?.ended_at, sessionId, report]);
+    if (phase === "ratings" && !transcriptAnalysis) {
+      setTranscriptAnalysisLoading(true);
+      getTranscriptAnalysis(sessionId)
+        .then(setTranscriptAnalysis)
+        .catch(() => setTranscriptAnalysis(null))
+        .finally(() => setTranscriptAnalysisLoading(false));
+    }
+  }, [phase, session?.ended_at, sessionId, report, transcriptAnalysis]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -473,123 +485,155 @@ export default function SessionDetailPage() {
 
         {/* Ratings */}
         {phase === "ratings" && (
-          <div className="max-w-2xl mx-auto space-y-8">
-            {!hasRatingsData ? (
-              <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-10 text-center space-y-2">
-                <p className="text-gray-300 font-medium">
-                  No ratings data yet
-                </p>
-                <p className="text-sm text-gray-500">
-                  Complete a session with your Cue glasses to see filler words,
-                  speaking speed, audience retention, and overall rating here.
-                </p>
-                <Link
-                  href={`/sessions/${sessionId}`}
-                  className="inline-block mt-4 text-sm text-aqua hover:underline"
-                >
-                  View session details
-                </Link>
-              </div>
-            ) : (
-              <>
-                {/* Overall */}
-                <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
-                  <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
-                    Overall rating
-                  </h2>
-                  <p className="text-4xl font-bold text-aqua">
-                    {session.overall_score != null
-                      ? Math.round(session.overall_score)
-                      : "—"}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">out of 100</p>
-                </section>
+          <div className="max-w-2xl mx-auto space-y-6">
 
-                {/* Per-part */}
-                <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
-                  <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
-                    Per-part ratings
-                  </h2>
-                  <div className="grid sm:grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">
-                        Filler words
-                      </p>
-                      <p className="text-lg font-semibold text-gray-200">
-                        {(session.summary as Record<string, unknown>)?.total_fillers != null
-                          ? String(
-                              (session.summary as Record<string, unknown>)
-                                .total_fillers
-                            )
-                          : "—"}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">
-                        Avg. speed (WPM)
-                      </p>
-                      <p className="text-lg font-semibold text-gray-200">
-                        {(session.summary as Record<string, unknown>)?.avg_wpm != null
-                          ? Math.round(
-                              (session.summary as Record<string, unknown>)
-                                .avg_wpm as number
-                            )
-                          : "—"}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">
-                        Audience attention
-                      </p>
-                      <p className="text-lg font-semibold text-gray-200">
-                        {(session.summary as Record<string, unknown>)?.avg_attention != null
-                          ? `${Math.round((session.summary as Record<string, unknown>).avg_attention as number * 100)}%`
-                          : "—"}
-                      </p>
-                    </div>
+            {/* ── Header scores row ── */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {/* Overall session score */}
+              <div className="col-span-2 sm:col-span-1 rounded-xl border border-gray-700 bg-gray-900/50 p-5 flex flex-col items-center justify-center gap-1">
+                <div className="relative w-20 h-20">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-700" />
+                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="2.5"
+                      strokeDasharray={`${session.overall_score ?? 0} ${100 - (session.overall_score ?? 0)}`}
+                      strokeLinecap="round" className="text-aqua transition-all duration-700" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-xl font-bold text-white">{session.overall_score != null ? Math.round(session.overall_score) : "—"}</span>
                   </div>
-                </section>
+                </div>
+                <p className="text-xs text-gray-500">Overall</p>
+              </div>
 
-                {/* Major flags from report */}
-                {reportLoading && (
-                  <p className="text-sm text-gray-500">Loading report…</p>
-                )}
-                {report && report.report.areas_to_improve?.length > 0 && (
-                  <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6">
-                    <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
-                      Major flags
-                    </h2>
-                    <ul className="space-y-2">
-                      {report.report.areas_to_improve.map((item, i) => (
-                        <li
-                          key={i}
-                          className="text-sm text-gray-300 flex gap-2"
-                        >
-                          <span className="text-aqua shrink-0">•</span>
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
+              {/* Quick stat tiles */}
+              {[
+                { label: "Filler words", val: (session.summary as Record<string,unknown>)?.total_fillers != null ? String((session.summary as Record<string,unknown>).total_fillers) : "—" },
+                { label: "Avg WPM", val: (session.summary as Record<string,unknown>)?.avg_wpm != null ? String(Math.round((session.summary as Record<string,unknown>).avg_wpm as number)) : "—" },
+                { label: "Duration", val: session.duration_seconds != null ? `${Math.round(session.duration_seconds)}s` : "—" },
+              ].map(({ label, val }) => (
+                <div key={label} className="rounded-xl border border-gray-700 bg-gray-900/50 p-5 flex flex-col justify-center">
+                  <p className="text-2xl font-bold text-white">{val}</p>
+                  <p className="text-xs text-gray-500 mt-1">{label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Transcript speech indicators ── */}
+            {transcriptAnalysisLoading && (
+              <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 flex items-center gap-3 text-sm text-gray-400">
+                <div className="w-4 h-4 border-2 border-aqua border-t-transparent rounded-full animate-spin shrink-0" />
+                Analysing transcript…
+              </div>
+            )}
+
+            {transcriptAnalysis && !transcriptAnalysisLoading && (
+              <>
+                {!transcriptAnalysis.transcript_found || transcriptAnalysis.word_count === 0 ? (
+                  <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 text-sm text-gray-500">
+                    No transcript file found for this session — indicators will appear after a live session is recorded.
+                  </div>
+                ) : (
+                  <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 space-y-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Speech indicators</h2>
+                      <span className="text-xs text-gray-500">{transcriptAnalysis.word_count} words · ~{Math.round(transcriptAnalysis.duration_estimate_seconds)}s</span>
+                    </div>
+
+                    <div className="space-y-4">
+                      {transcriptAnalysis.indicators.map((ind: TranscriptIndicator) => {
+                        const color = ind.score >= 75 ? "bg-aqua" : ind.score >= 50 ? "bg-yellow-400" : "bg-red-400";
+                        const textColor = ind.score >= 75 ? "text-aqua" : ind.score >= 50 ? "text-yellow-400" : "text-red-400";
+                        return (
+                          <div key={ind.label}>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-sm font-medium text-gray-200">{ind.label}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500">{ind.value}</span>
+                                <span className={`text-sm font-bold tabular-nums ${textColor}`}>{Math.round(ind.score)}</span>
+                              </div>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                              <div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: `${ind.score}%` }} />
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">{ind.blurb}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Overall transcript score */}
+                    <div className="pt-3 border-t border-gray-800 flex items-center justify-between">
+                      <span className="text-sm text-gray-400">Transcript score</span>
+                      <span className={`text-lg font-bold ${transcriptAnalysis.overall_score >= 75 ? "text-aqua" : transcriptAnalysis.overall_score >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                        {Math.round(transcriptAnalysis.overall_score)} / 100
+                      </span>
+                    </div>
                   </section>
                 )}
 
-                {report && (
-                  <div className="flex gap-2">
-                    <Link
-                      href={`/sessions/${sessionId}/report`}
-                      className="text-sm text-aqua hover:underline"
-                    >
-                      Full report →
-                    </Link>
-                    <Link
-                      href={`/sessions/${sessionId}`}
-                      className="text-sm text-gray-500 hover:text-aqua transition-colors"
-                    >
-                      Transcript & charts
-                    </Link>
-                  </div>
+                {/* Filler word breakdown */}
+                {transcriptAnalysis.transcript_found && Object.keys(transcriptAnalysis.filler_words_detail).length > 0 && (
+                  <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 space-y-3">
+                    <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Filler word breakdown</h2>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(transcriptAnalysis.filler_words_detail)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([word, count]) => (
+                          <span key={word} className="rounded-full border border-aqua/30 bg-aqua/10 px-3 py-1 text-xs font-medium text-aqua">
+                            {word} <span className="text-aqua/60">×{count}</span>
+                          </span>
+                        ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Transcript excerpt */}
+                {transcriptAnalysis.transcript_excerpt && (
+                  <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 space-y-2">
+                    <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Transcript excerpt</h2>
+                    <p className="text-sm text-gray-300 leading-relaxed font-mono">
+                      {transcriptAnalysis.transcript_excerpt}
+                      {transcriptAnalysis.transcript_length > 400 && (
+                        <span className="text-gray-600"> …({transcriptAnalysis.word_count} words total)</span>
+                      )}
+                    </p>
+                  </section>
                 )}
               </>
+            )}
+
+            {/* ── AI report (areas to improve) ── */}
+            {reportLoading && (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <div className="w-4 h-4 border-2 border-aqua border-t-transparent rounded-full animate-spin" />
+                Generating coaching report…
+              </div>
+            )}
+            {report && report.report.areas_to_improve?.length > 0 && (
+              <section className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 space-y-3">
+                <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Areas to improve</h2>
+                <ul className="space-y-2">
+                  {report.report.areas_to_improve.map((item, i) => (
+                    <li key={i} className="text-sm text-gray-300 flex gap-2">
+                      <span className="text-aqua shrink-0 mt-0.5">•</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            {report && report.report.what_went_well?.length > 0 && (
+              <section className="rounded-xl border border-green-500/20 bg-green-500/5 p-6 space-y-3">
+                <h2 className="text-sm font-medium text-green-400/70 uppercase tracking-wide">What went well</h2>
+                <ul className="space-y-2">
+                  {report.report.what_went_well.map((item, i) => (
+                    <li key={i} className="text-sm text-gray-300 flex gap-2">
+                      <span className="text-green-400 shrink-0 mt-0.5">✓</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
           </div>
         )}

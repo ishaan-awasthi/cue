@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Annotated
 
 from pydantic import BaseModel
@@ -312,6 +313,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         except Exception:
             pass
 
+    # Accumulate transcript chunks for file save on disconnect
+    _transcript_chunks: list[str] = []
+
     # Initialise pipelines
     coaching = CoachingPipeline(session_id, user_id, send_audio)
     qa = QAPipeline(
@@ -325,6 +329,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         await coaching.on_audio_signal(signal)
 
     async def on_transcript_chunk(chunk: str):
+        _transcript_chunks.append(chunk)
         await qa.on_transcript_chunk(chunk)
 
     audio_pipeline = AudioPipeline(
@@ -384,6 +389,18 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         await coaching.stop()
         await qa.stop()
 
+        # Save full transcript to Supabase Storage (bucket: transcripts)
+        try:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            full_transcript = " ".join(_transcript_chunks).strip()
+            storage_path = await asyncio_to_thread(
+                queries.save_transcript, session_id, timestamp, full_transcript
+            )
+            logger.info("Transcript saved to Supabase Storage: %s (%d chars)", storage_path, len(full_transcript))
+            print(f"[ws] Transcript saved → supabase://transcripts/{storage_path} ({len(full_transcript)} chars)")
+        except Exception as exc:
+            logger.error("Failed to save transcript: %s", exc)
+
         # Post-session: compute aggregate metrics and close session
         try:
             audience_signals: list = []  # vision aggregates in 3-s windows; coaching holds audio
@@ -424,6 +441,206 @@ def _compute_overall_score(metrics: dict[str, float]) -> float:
         score -= 15
 
     return max(0.0, min(100.0, round(score, 1)))
+
+
+# ---------------------------------------------------------------------------
+# Transcript analysis (post-session, from saved .txt file)
+# ---------------------------------------------------------------------------
+
+class TranscriptIndicator(BaseModel):
+    label: str
+    score: float          # 0–100
+    value: str            # human-readable value, e.g. "3.2/min" or "128 WPM"
+    blurb: str            # one-sentence interpretation
+
+class TranscriptAnalysisResponse(BaseModel):
+    session_id: str
+    transcript_found: bool
+    transcript_length: int        # char count
+    word_count: int
+    duration_estimate_seconds: float
+    indicators: list[TranscriptIndicator]
+    overall_score: float
+    filler_words_detail: dict[str, int]   # word → count
+    transcript_excerpt: str       # first 400 chars for UI display
+
+
+_TRANSCRIPT_UNIGRAMS: set[str] = {
+    "uh", "um", "hmm", "er", "erm", "like", "so", "basically",
+    "literally", "actually", "right", "okay", "you know",
+}
+_TRANSCRIPT_BIGRAMS: list[str] = [
+    "you know", "i mean", "kind of", "sort of", "you see",
+]
+
+import re as _re
+
+def _analyse_transcript(text: str, session_id: str) -> TranscriptAnalysisResponse:
+    """Run speech indicators over a raw transcript string."""
+    words = _re.findall(r"\b[a-zA-Z']+\b", text.lower())
+    word_count = len(words)
+
+    # Estimate duration from WPM of ~130 (average conversational pace)
+    duration_estimate_seconds = (word_count / 130) * 60 if word_count else 0
+    duration_min = max(duration_estimate_seconds / 60, 0.05)
+
+    # --- Filler word count (bigram-first) ---
+    working = text.lower()
+    filler_detail: dict[str, int] = {}
+    for bigram in _TRANSCRIPT_BIGRAMS:
+        pat = _re.compile(r"\b" + _re.escape(bigram) + r"\b")
+        matches = pat.findall(working)
+        if matches:
+            filler_detail[bigram] = filler_detail.get(bigram, 0) + len(matches)
+            working = pat.sub(" _ ", working)
+    for w in _re.findall(r"\b[a-z']+\b", working):
+        if w in _TRANSCRIPT_UNIGRAMS:
+            filler_detail[w] = filler_detail.get(w, 0) + 1
+    total_fillers = sum(filler_detail.values())
+    filler_rate = total_fillers / duration_min
+
+    # --- Vocabulary diversity (type-token ratio, capped to first 200 words) ---
+    sample = words[:200]
+    ttr = len(set(sample)) / len(sample) if sample else 0
+
+    # --- Sentence length consistency ---
+    sentences = [s.strip() for s in _re.split(r"[.!?]+", text) if s.strip()]
+    sent_lengths = [len(_re.findall(r"\b[a-zA-Z']+\b", s)) for s in sentences]
+    if sent_lengths:
+        avg_sent = sum(sent_lengths) / len(sent_lengths)
+        variance = sum((l - avg_sent) ** 2 for l in sent_lengths) / len(sent_lengths)
+        consistency_score = max(0, min(100, 100 - (variance ** 0.5) * 2))
+    else:
+        avg_sent = 0
+        consistency_score = 50
+
+    # --- WPM score (target 110–160) ---
+    estimated_wpm = word_count / duration_min if word_count else 0  # stays at ~130 since we seeded duration from 130
+    # Re-derive pacing from sentence rhythm instead: words per sentence
+    wpm_score = 100 if 110 <= estimated_wpm <= 160 else max(0, 100 - abs(estimated_wpm - 135) * 1.5)
+
+    # --- Filler score ---
+    filler_score = max(0, min(100, 100 - filler_rate * 15))
+
+    # --- Vocabulary score ---
+    vocab_score = min(100, ttr * 160)  # TTR ~0.6 → 100 pts
+
+    # --- Repetition: top-5 non-stopwords repeated excessively ---
+    STOP = {"the","a","an","and","or","but","in","on","at","to","for","of","is","it","i","you","we","they","was","be","are","with","that","this","have","had","not","my","your","its","as","do","he","she","he","so","if","by","from","just","can","will","would","there","their","they","all","been","has","more","than","what","about","into","him","her","his","who","get","one","when","how","up","out","no","were","said","also","some","me","us","our"}
+    content_words = [w for w in words if w not in STOP and len(w) > 3]
+    freq: dict[str, int] = {}
+    for w in content_words:
+        freq[w] = freq.get(w, 0) + 1
+    top_repeats = sorted(freq.items(), key=lambda x: x[1], reverse=True)[:5]
+    max_repeat_rate = (top_repeats[0][1] / word_count * 100) if top_repeats and word_count else 0
+    repetition_score = max(0, min(100, 100 - max(0, max_repeat_rate - 3) * 10))
+
+    # --- Build indicators ---
+    indicators: list[TranscriptIndicator] = [
+        TranscriptIndicator(
+            label="Filler words",
+            score=round(filler_score, 1),
+            value=f"{round(filler_rate, 1)}/min ({total_fillers} total)",
+            blurb=(
+                "Clean — very few fillers detected." if filler_rate < 1
+                else "Mild filler usage — room to improve." if filler_rate < 3
+                else "High filler rate — focus on pausing instead of filling silence."
+            ),
+        ),
+        TranscriptIndicator(
+            label="Vocabulary diversity",
+            score=round(vocab_score, 1),
+            value=f"{round(ttr * 100, 0):.0f}% unique words",
+            blurb=(
+                "Rich vocabulary — varied word choice keeps the audience engaged." if ttr > 0.6
+                else "Moderate range — try varying word choice more." if ttr > 0.45
+                else "Repetitive word choice — expand your vocabulary use."
+            ),
+        ),
+        TranscriptIndicator(
+            label="Sentence consistency",
+            score=round(consistency_score, 1),
+            value=f"avg {round(avg_sent, 1)} words/sentence",
+            blurb=(
+                "Very consistent sentence length — easy to follow." if consistency_score >= 75
+                else "Some variation in sentence length — mostly fine." if consistency_score >= 50
+                else "Highly erratic sentence lengths — mix of very short and very long bursts."
+            ),
+        ),
+        TranscriptIndicator(
+            label="Word repetition",
+            score=round(repetition_score, 1),
+            value=f'"{top_repeats[0][0]}" ×{top_repeats[0][1]}' if top_repeats else "—",
+            blurb=(
+                "Good word variety — no single word overused." if max_repeat_rate < 3
+                else f'"{top_repeats[0][0] if top_repeats else ""}" appears frequently — consider synonyms.' if max_repeat_rate < 6
+                else f'Heavy repetition of "{top_repeats[0][0] if top_repeats else ""}" — diversify your language.'
+            ),
+        ),
+        TranscriptIndicator(
+            label="Content density",
+            score=round(min(100, len(content_words) / max(word_count, 1) * 200), 1),
+            value=f"{round(len(content_words)/max(word_count,1)*100,0):.0f}% content words",
+            blurb=(
+                "High content density — substantive and focused." if len(content_words) / max(word_count, 1) > 0.5
+                else "Moderate density — could be more specific." if len(content_words) / max(word_count, 1) > 0.35
+                else "Low content density — lots of filler language relative to substance."
+            ),
+        ),
+    ]
+
+    overall_score = round(
+        filler_score * 0.30 + vocab_score * 0.20 + consistency_score * 0.20 +
+        repetition_score * 0.15 + indicators[4].score * 0.15,
+        1,
+    )
+
+    return TranscriptAnalysisResponse(
+        session_id=session_id,
+        transcript_found=True,
+        transcript_length=len(text),
+        word_count=word_count,
+        duration_estimate_seconds=round(duration_estimate_seconds, 1),
+        indicators=indicators,
+        overall_score=min(100, overall_score),
+        filler_words_detail=filler_detail,
+        transcript_excerpt=text[:400],
+    )
+
+
+@app.post("/sessions/{session_id}/transcript-analysis")
+async def transcript_analysis(session_id: str, user_id: str = Depends(get_user_id)):
+    """Download the saved transcript from Supabase Storage and return speech indicators."""
+    text = await asyncio_to_thread(queries.get_transcript, session_id)
+
+    if text is None:
+        return TranscriptAnalysisResponse(
+            session_id=session_id,
+            transcript_found=False,
+            transcript_length=0,
+            word_count=0,
+            duration_estimate_seconds=0,
+            indicators=[],
+            overall_score=0,
+            filler_words_detail={},
+            transcript_excerpt="",
+        )
+
+    text = text.strip()
+    if not text:
+        return TranscriptAnalysisResponse(
+            session_id=session_id,
+            transcript_found=True,
+            transcript_length=0,
+            word_count=0,
+            duration_estimate_seconds=0,
+            indicators=[],
+            overall_score=0,
+            filler_words_detail={},
+            transcript_excerpt="",
+        )
+
+    return await asyncio.to_thread(_analyse_transcript, text, session_id)
 
 
 # ---------------------------------------------------------------------------
