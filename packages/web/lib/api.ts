@@ -11,14 +11,8 @@ export type { Session, SessionEvent, UploadedFile };
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Default user ID used in dev.  In production replace with real auth.
-export const DEFAULT_USER_ID =
+const DEFAULT_USER_ID =
   process.env.NEXT_PUBLIC_USER_ID ?? "00000000-0000-0000-0000-000000000001";
-
-/** WebSocket URL for live session audio streaming (ws scheme, same host/port as API). */
-export function sessionWebSocketUrl(sessionId: string): string {
-  const base = BASE_URL.replace(/^http/, "ws");
-  return `${base}/ws/${sessionId}?user_id=${encodeURIComponent(DEFAULT_USER_ID)}`;
-}
 
 function headers(extra: Record<string, string> = {}): HeadersInit {
   return {
@@ -74,16 +68,6 @@ export async function createSession(): Promise<Session> {
   const data = await res.json();
   if (!data?.id) throw new Error("Invalid session response");
   return data as Session;
-}
-
-/** Tell the backend to end the live session: close the WebSocket so audio/vision processing stops. */
-export async function endSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/end`, {
-    method: "POST",
-    headers: headers(),
-  });
-  if (res.status === 204) return;
-  if (!res.ok) throw new Error(`endSession failed: ${res.statusText}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -154,21 +138,10 @@ export async function listFiles(): Promise<UploadedFile[]> {
   return Array.isArray(data) ? data : [];
 }
 
-export async function listSessionFiles(sessionId: string): Promise<UploadedFile[]> {
-  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/files`, {
-    method: "GET",
-    headers: headers(),
-  });
-  if (!res.ok) throw new Error(`listSessionFiles failed: ${res.statusText}`);
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
-}
-
-export async function uploadFile(file: File, sessionId?: string): Promise<UploadedFile> {
+export async function uploadFile(file: File): Promise<UploadedFile> {
   const form = new FormData();
   form.append("file", file);
-  const url = sessionId ? `${BASE_URL}/sessions/${sessionId}/files` : `${BASE_URL}/files/upload`;
-  const res = await fetch(url, {
+  const res = await fetch(`${BASE_URL}/files/upload`, {
     method: "POST",
     headers: headers(),   // no Content-Type — browser sets it for FormData
     body: form,
@@ -185,32 +158,40 @@ export async function deleteFile(fileId: string): Promise<void> {
   if (!res.ok) throw new Error(`deleteFile failed: ${res.statusText}`);
 }
 
-export interface SessionQAResponse {
-  answer: string;
-  source: "session_docs" | "llm_fallback";
-  confidence: number;
-  supporting_context: Array<{ fileName: string; location: string }>;
-  status?: "ready" | "processing";
+// ---------------------------------------------------------------------------
+// Transcript analysis
+// ---------------------------------------------------------------------------
+
+export interface TranscriptIndicator {
+  label: string;
+  score: number;        // 0–100
+  value: string;        // e.g. "3.2/min (12 total)"
+  blurb: string;
 }
 
-export async function askSessionQuestion(
-  sessionId: string,
-  question: string
-): Promise<SessionQAResponse> {
-  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/qa`, {
+export interface TranscriptAnalysisResult {
+  session_id: string;
+  transcript_found: boolean;
+  transcript_length: number;
+  word_count: number;
+  duration_estimate_seconds: number;
+  indicators: TranscriptIndicator[];
+  overall_score: number;
+  filler_words_detail: Record<string, number>;
+  transcript_excerpt: string;
+}
+
+export async function getTranscriptAnalysis(sessionId: string): Promise<TranscriptAnalysisResult> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/transcript-analysis`, {
     method: "POST",
-    headers: { ...headers(), "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    headers: headers(),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail ?? `session QA failed: ${res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`transcript-analysis failed: ${res.statusText}`);
   return res.json();
 }
 
 // ---------------------------------------------------------------------------
-// Practice Mode
+// Practice drill analysis
 // ---------------------------------------------------------------------------
 
 export interface PracticeNudge {
@@ -237,6 +218,6 @@ export async function analyzePracticeDrill(opts: {
     headers: { ...headers(), "Content-Type": "application/json" },
     body: JSON.stringify(opts),
   });
-  if (!res.ok) throw new Error(`analyzePracticeDrill failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Practice analyze failed: ${res.statusText}`);
   return res.json();
 }

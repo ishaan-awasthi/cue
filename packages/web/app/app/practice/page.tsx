@@ -4,31 +4,12 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { listSessions, getCurrentUserId } from "../../../lib/supabase";
-import { getSessionReport, analyzePracticeDrill } from "../../../lib/api";
+import { getSessionReport, analyzePracticeDrill, type PracticeAnalyzeResult } from "../../../lib/api";
 import type { Session } from "../../../lib/supabase";
-import type { PracticeNudge, PracticeAnalyzeResult } from "../../../lib/api";
 
 // ---------------------------------------------------------------------------
-// Types
+// Lesson definitions
 // ---------------------------------------------------------------------------
-
-// SpeechRecognition is not always in older TS dom lib versions — declare locally
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-  resultIndex: number;
-}
-interface SpeechRecognitionInstance extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((e: SpeechRecognitionEvent) => void) | null;
-  onerror: ((e: Event) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
-  abort(): void;
-}
-type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
 interface SpeakingDrill {
   type: "speaking";
@@ -53,470 +34,720 @@ interface QuizDrill {
 
 type Drill = SpeakingDrill | QuizDrill;
 
-type View = "pick-session" | "path" | "lesson" | "complete";
-
-// ---------------------------------------------------------------------------
-// Default drills
-// ---------------------------------------------------------------------------
-
 const DEMO_DRILLS: Drill[] = [
   {
     type: "speaking",
     id: "d-1",
     title: "The 60-second hook",
-    description: "Open strong in under a minute.",
-    prompt: "Introduce yourself and your main idea as if you have 60 seconds on stage. Make every word count.",
+    description: "Open strong without notes",
+    prompt:
+      "Introduce yourself and your biggest professional achievement — no notes, just talk. Aim for a strong opening sentence.",
     durationSeconds: 60,
-    tip: "Start with a bold claim or question — not 'So today I want to talk about…'",
+    tip: "Start with a bold claim or surprising number. Avoid opening with 'So,' or 'Okay, um...'",
   },
   {
     type: "quiz",
     id: "d-2",
     title: "Filler word awareness",
-    description: "Test your knowledge of common fillers.",
-    question: "Which of the following is the best strategy when you feel the urge to say 'um'?",
+    description: "Know which words to cut",
+    question:
+      "Which is the most effective replacement for a filler word like 'um'?",
     options: [
-      "Say 'um' quietly so it's less noticeable",
-      "Pause silently — a beat of silence sounds confident",
-      "Speak faster to fill the gap",
-      "Clear your throat instead",
+      "Say 'basically' instead",
+      "Pause silently for 1–2 seconds",
+      "Speed up to hide the gap",
+      "Use 'right?' to engage the audience",
     ],
     correctIndex: 1,
-    explanation: "A deliberate pause signals confidence and gives the audience time to absorb what you said. Silence is a tool, not a flaw.",
+    explanation:
+      "A deliberate pause feels more confident than any filler. Silence gives the audience time to absorb your point.",
   },
   {
     type: "speaking",
     id: "d-3",
     title: "Vary your pace",
-    description: "Practice slowing down for impact.",
-    prompt: "Describe a challenge you overcame. Speed up on the background details; slow down and pause before the key lesson.",
+    description: "Speed up and slow down on purpose",
+    prompt:
+      "Tell a short story about a challenge you overcame. Deliberately slow down on the most important moment.",
     durationSeconds: 90,
-    tip: "Pace changes signal importance. Slow = this matters. Fast = background info.",
+    tip: "Speed up during background context, slow down and lower pitch on the key insight.",
   },
   {
     type: "quiz",
     id: "d-4",
     title: "Ideal speaking pace",
-    description: "Know your target WPM range.",
-    question: "What is the generally recommended speaking pace for a presentation?",
-    options: [
-      "80–100 words per minute",
-      "110–160 words per minute",
-      "170–200 words per minute",
-      "200+ words per minute",
-    ],
+    description: "Find the right WPM range",
+    question:
+      "What words-per-minute range is generally considered clear and engaging for presentations?",
+    options: ["60–90 WPM", "110–160 WPM", "170–200 WPM", "220+ WPM"],
     correctIndex: 1,
-    explanation: "110–160 WPM is the sweet spot: fast enough to feel energetic, slow enough to be understood clearly.",
+    explanation:
+      "110–160 WPM is the sweet spot — fast enough to sound energised, slow enough for complex ideas to land.",
   },
   {
     type: "speaking",
     id: "d-5",
     title: "Handle a tough question",
-    description: "Stay calm under pressure.",
-    prompt: "Someone just asked you a question you don't fully know the answer to. Respond honestly and confidently in under 45 seconds.",
+    description: "Buy time, stay calm",
+    prompt:
+      "Someone just asked: 'Why should we trust your numbers?' Answer calmly and confidently without fillers.",
     durationSeconds: 45,
-    tip: "It's okay to say 'I don't know the full answer, but here's what I do know…' — audiences respect honesty.",
+    tip: "Bridge with 'That's a great question — here's what the data shows...' then give one clear point.",
   },
 ];
 
+function buildDrillsFromReport(areas: string[], drills: string[]): Drill[] {
+  const result: Drill[] = [];
+  areas.forEach((area, i) => {
+    result.push({
+      type: "speaking",
+      id: `area-${i}`,
+      title: area,
+      description: "Targeted speaking drill",
+      prompt: `Speak for 60 seconds on a topic you know well, focusing specifically on: ${area}. Keep going even if you stumble.`,
+      durationSeconds: 60,
+      tip: area,
+    } as SpeakingDrill);
+  });
+  drills.forEach((drill, i) => {
+    result.push({
+      type: "speaking",
+      id: `drill-${i}`,
+      title: drill,
+      description: "From your session report",
+      prompt: `Practice this drill: ${drill}. Speak naturally for 45 seconds.`,
+      durationSeconds: 45,
+      tip: drill,
+    } as SpeakingDrill);
+  });
+  // Always include at least one quiz for variety
+  result.push(DEMO_DRILLS[1], DEMO_DRILLS[3]);
+  return result;
+}
+
 // ---------------------------------------------------------------------------
-// Filler counting (mirrors backend)
+// Speech recorder hook
 // ---------------------------------------------------------------------------
 
-const FILLER_UNIGRAMS = new Set(["uh", "um", "hmm", "er", "erm", "like", "so", "basically", "literally", "actually"]);
+interface RecorderState {
+  status: "idle" | "recording" | "done" | "error";
+  transcript: string;
+  durationSeconds: number;
+  wordCount: number;
+  fillerCount: number;
+  errorMsg: string;
+}
+
+// Single-word fillers — checked word-by-word after stripping punctuation
+const FILLER_WORD_SET = new Set([
+  "uh", "um", "hmm", "er", "erm", "like", "so", "basically", "literally", "actually",
+]);
+// Bigram fillers — checked against the raw transcript before splitting
 const FILLER_BIGRAMS = ["you know", "i mean", "kind of", "sort of", "you see"];
 
 function countFillers(transcript: string): { count: number; found: string[] } {
   let text = transcript.toLowerCase();
   const found: string[] = [];
-  let count = 0;
+
+  // Check bigrams first (replace so they don't also match single words)
   for (const bigram of FILLER_BIGRAMS) {
-    const re = new RegExp(`\\b${bigram.replace(/ /g, "\\s+")}\\b`, "g");
+    const re = new RegExp(bigram.replace(" ", "\\s+"), "g");
     const matches = text.match(re);
     if (matches) {
-      found.push(bigram);
-      count += matches.length;
+      found.push(...matches.map(() => bigram));
       text = text.replace(re, " _ ");
     }
   }
-  for (const word of text.split(/\s+/)) {
-    const clean = word.replace(/[^a-z]/g, "");
-    if (FILLER_UNIGRAMS.has(clean)) {
-      if (!found.includes(clean)) found.push(clean);
-      count++;
+
+  // Check single words
+  const words = text.split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    const clean = w.replace(/[^a-z]/g, "");
+    if (FILLER_WORD_SET.has(clean)) {
+      found.push(clean);
     }
   }
-  return { count, found };
+
+  return { count: found.length, found };
 }
 
-// ---------------------------------------------------------------------------
-// buildDrillsFromReport
-// ---------------------------------------------------------------------------
+function useSpeechRecorder() {
+  const [state, setState] = useState<RecorderState>({
+    status: "idle",
+    transcript: "",
+    durationSeconds: 0,
+    wordCount: 0,
+    fillerCount: 0,
+    errorMsg: "",
+  });
+  const [elapsed, setElapsed] = useState(0);
 
-function buildDrillsFromReport(areas: string[], _drills: string[]): Drill[] {
-  return DEMO_DRILLS;
-}
-
-// ---------------------------------------------------------------------------
-// useSpeechRecorder hook
-// ---------------------------------------------------------------------------
-
-type RecordStatus = "idle" | "recording" | "done";
-
-interface RecorderState {
-  status: RecordStatus;
-  liveTranscript: string;
-  finalTranscript: string;
-  wordCount: number;
-  fillerCount: number;
-  durationSeconds: number;
-  start: () => void;
-  stop: () => void;
-  reset: () => void;
-}
-
-function useSpeechRecorder(): RecorderState {
-  const [status, setStatus] = useState<RecordStatus>("idle");
-  const [liveTranscript, setLiveTranscript] = useState("");
-  const [finalTranscript, setFinalTranscript] = useState("");
-  const [wordCount, setWordCount] = useState(0);
-  const [fillerCount, setFillerCount] = useState(0);
-  const [durationSeconds, setDurationSeconds] = useState(0);
-
-  const recogRef = useRef<SpeechRecognitionInstance | null>(null);
-  const finalRef = useRef("");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
   const startTimeRef = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const transcriptRef = useRef<string>("");
 
   const start = useCallback(() => {
-    const SpeechRecognitionCtor = (
-      (window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }).SpeechRecognition ??
-      (window as Window & { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition
-    );
-    if (!SpeechRecognitionCtor) {
-      alert("Speech recognition is not supported in this browser. Try Chrome.");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+
+    if (!SR) {
+      setState((s) => ({
+        ...s,
+        status: "error",
+        errorMsg: "Speech recognition is not supported in this browser. Try Chrome or Edge.",
+      }));
       return;
     }
-    const recog = new SpeechRecognitionCtor();
-    recog.continuous = true;
-    recog.interimResults = true;
-    recog.lang = "en-US";
-    finalRef.current = "";
-    startTimeRef.current = Date.now();
 
-    recog.onresult = (e: SpeechRecognitionEvent) => {
+    transcriptRef.current = "";
+    startTimeRef.current = Date.now();
+    setElapsed(0);
+
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+
+    let finalTranscript = "";
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
       let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) {
-          finalRef.current += r[0].transcript + " ";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript + " ";
         } else {
-          interim += r[0].transcript;
+          interim += result[0].transcript;
         }
       }
-      setFinalTranscript(finalRef.current);
-      setLiveTranscript(finalRef.current + interim);
+      transcriptRef.current = finalTranscript + interim;
+      setState((s) => ({ ...s, transcript: transcriptRef.current }));
     };
 
-    recog.start();
-    recogRef.current = recog;
-    setStatus("recording");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (e: any) => {
+      if (e.error === "no-speech" || e.error === "aborted") return;
+      setState((s) => ({
+        ...s,
+        status: "error",
+        errorMsg: `Mic error: ${e.error}`,
+      }));
+    };
+
+    recognition.start();
+
+    timerRef.current = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 500);
+
+    setState((s) => ({ ...s, status: "recording", transcript: "", errorMsg: "" }));
   }, []);
 
   const stop = useCallback(() => {
-    if (recogRef.current) {
-      recogRef.current.stop();
-      recogRef.current = null;
-    }
-    const elapsed = (Date.now() - startTimeRef.current) / 1000;
-    const text = finalRef.current.trim();
-    const words = text ? text.split(/\s+/).length : 0;
-    const { count } = countFillers(text);
-    setWordCount(words);
-    setFillerCount(count);
-    setDurationSeconds(elapsed);
-    setFinalTranscript(text);
-    setLiveTranscript(text);
-    setStatus("done");
+    recognitionRef.current?.stop();
+    if (timerRef.current) clearInterval(timerRef.current);
+    const durationSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
+    const transcript = transcriptRef.current.trim();
+    const words = transcript.split(/\s+/).filter(Boolean);
+    const { count: fillerCount } = countFillers(transcript);
+    setState({
+      status: "done",
+      transcript,
+      durationSeconds,
+      wordCount: words.length,
+      fillerCount,
+      errorMsg: "",
+    });
+    setElapsed(durationSeconds);
   }, []);
 
   const reset = useCallback(() => {
-    if (recogRef.current) {
-      recogRef.current.abort();
-      recogRef.current = null;
-    }
-    finalRef.current = "";
-    setStatus("idle");
-    setLiveTranscript("");
-    setFinalTranscript("");
-    setWordCount(0);
-    setFillerCount(0);
-    setDurationSeconds(0);
+    recognitionRef.current?.abort();
+    if (timerRef.current) clearInterval(timerRef.current);
+    transcriptRef.current = "";
+    setElapsed(0);
+    setState({
+      status: "idle",
+      transcript: "",
+      durationSeconds: 0,
+      wordCount: 0,
+      fillerCount: 0,
+      errorMsg: "",
+    });
   }, []);
 
-  return { status, liveTranscript, finalTranscript, wordCount, fillerCount, durationSeconds, start, stop, reset };
+  return { state, elapsed, start, stop, reset };
 }
 
 // ---------------------------------------------------------------------------
-// ScoreRing
+// Score ring
 // ---------------------------------------------------------------------------
 
-function ScoreRing({ score }: { score: number }) {
-  const color = score >= 80 ? "var(--aqua)" : score >= 60 ? "#9ca3af" : "#6b7280";
-  const r = 40;
-  const circ = 2 * Math.PI * r;
-  const filled = (score / 100) * circ;
+function ScoreRing({ score, size = 96 }: { score: number; size?: number }) {
+  const colorClass =
+    score >= 80 ? "text-aqua" : score >= 60 ? "text-gray-300" : "text-gray-500";
   return (
-    <svg width="120" height="120" viewBox="0 0 100 100">
-      <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(240,245,243,0.06)" strokeWidth="10" />
-      <circle
-        cx="50" cy="50" r={r} fill="none"
-        stroke={color} strokeWidth="10"
-        strokeDasharray={`${filled} ${circ - filled}`}
-        strokeLinecap="round"
-        transform="rotate(-90 50 50)"
-      />
-      <text x="50" y="50" textAnchor="middle" dominantBaseline="central" fill={color} fontSize="18" fontWeight="900">
-        {Math.round(score)}
-      </text>
-    </svg>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SpeakingLesson
-// ---------------------------------------------------------------------------
-
-function SpeakingLesson({ drill, onComplete }: { drill: SpeakingDrill; onComplete: (score: number) => void }) {
-  const recorder = useSpeechRecorder();
-  const [timeLeft, setTimeLeft] = useState(drill.durationSeconds);
-  const [result, setResult] = useState<PracticeAnalyzeResult | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
-
-  // Auto-stop timer
-  useEffect(() => {
-    if (recorder.status !== "recording") return;
-    setTimeLeft(drill.durationSeconds);
-    const interval = setInterval(() => {
-      setTimeLeft((t) => {
-        if (t <= 1) { recorder.stop(); return 0; }
-        return t - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [recorder.status, drill.durationSeconds, recorder.stop]);
-
-  // Analyze when done
-  useEffect(() => {
-    if (recorder.status !== "done" || result) return;
-    setAnalyzing(true);
-    const wpm = recorder.durationSeconds > 0
-      ? (recorder.wordCount / recorder.durationSeconds) * 60
-      : 0;
-    analyzePracticeDrill({
-      transcript: recorder.finalTranscript,
-      words_per_minute: wpm,
-      filler_word_count: recorder.fillerCount,
-      duration_seconds: recorder.durationSeconds,
-    })
-      .then(setResult)
-      .catch(() => {
-        const wpmInRange = wpm >= 110 && wpm <= 160;
-        const fallbackScore = Math.max(0, Math.min(100, 80 - recorder.fillerCount * 5 + (wpmInRange ? 10 : 0)));
-        setResult({
-          score: fallbackScore,
-          nudges: [],
-          filler_words_found: countFillers(recorder.finalTranscript).found,
-          wpm,
-        });
-      })
-      .finally(() => setAnalyzing(false));
-  }, [recorder.status, result]);
-
-  const progressPct = ((drill.durationSeconds - timeLeft) / drill.durationSeconds) * 100;
-
-  if (recorder.status === "idle") {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-        {/* Tip card */}
-        <div className="feature-card" style={{ padding: "16px 20px", borderColor: "rgba(45,255,192,0.2)" }}>
-          <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--aqua)", fontWeight: 600, marginBottom: "6px" }}>Tip</p>
-          <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.7)", lineHeight: 1.6 }}>{drill.tip}</p>
-        </div>
-        {/* Prompt card */}
-        <div className="feature-card" style={{ padding: "20px 24px" }}>
-          <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "10px" }}>Your prompt</p>
-          <p style={{ fontSize: "1rem", lineHeight: 1.7, color: "var(--fg)" }}>{drill.prompt}</p>
-        </div>
-        <p style={{ fontSize: "0.8rem", color: "rgba(240,245,243,0.4)", textAlign: "center" }}>
-          {drill.durationSeconds}s drill · click Start when ready
-        </p>
-        <button onClick={recorder.start} className="btn-pill btn-primary w-full" style={{ padding: "14px 24px" }}>
-          Start recording
-        </button>
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+        <path
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          className="text-gray-700"
+        />
+        <path
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeDasharray={`${score} ${100 - score}`}
+          strokeLinecap="round"
+          className={`${colorClass} transition-all duration-700`}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-xl font-bold text-white">{Math.round(score)}</span>
       </div>
-    );
-  }
-
-  if (recorder.status === "recording") {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-        {/* Progress bar */}
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "rgba(240,245,243,0.4)", marginBottom: "6px" }}>
-            <span style={{ color: "var(--aqua)", fontWeight: 600 }}>Recording…</span>
-            <span>{timeLeft}s left</span>
-          </div>
-          <div style={{ height: "4px", borderRadius: "999px", background: "rgba(240,245,243,0.06)", overflow: "hidden" }}>
-            <div style={{ height: "100%", borderRadius: "999px", background: "var(--aqua)", transition: "width 1s linear", width: `${progressPct}%` }} />
-          </div>
-        </div>
-        {/* Live transcript */}
-        <div className="feature-card" style={{ padding: "16px 20px", minHeight: "80px" }}>
-          <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.3)", fontWeight: 600, marginBottom: "8px" }}>Live transcript</p>
-          <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.6)", lineHeight: 1.6 }}>
-            {recorder.liveTranscript || <span style={{ opacity: 0.3 }}>Listening…</span>}
-          </p>
-        </div>
-        <button onClick={recorder.stop} className="btn-pill btn-ghost w-full" style={{ padding: "12px 24px" }}>
-          Stop early
-        </button>
-      </div>
-    );
-  }
-
-  // done
-  if (analyzing) {
-    return (
-      <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(240,245,243,0.4)", fontSize: "0.875rem" }}>
-        Analyzing your response…
-      </div>
-    );
-  }
-
-  if (result) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-        {/* Score */}
-        <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
-          <ScoreRing score={result.score} />
-          <div>
-            <p style={{ fontSize: "1.5rem", fontWeight: 900, letterSpacing: "-0.04em" }}>{Math.round(result.score)}/100</p>
-            <p style={{ fontSize: "0.8rem", color: "rgba(240,245,243,0.4)", marginTop: "2px" }}>
-              {result.wpm > 0 ? `${Math.round(result.wpm)} WPM` : ""}
-            </p>
-          </div>
-        </div>
-
-        {/* Nudges */}
-        {result.nudges.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {result.nudges.map((n: PracticeNudge, i: number) => (
-              <div key={i} className="feature-card" style={{ padding: "12px 16px", borderColor: "rgba(251,191,36,0.2)", background: "rgba(251,191,36,0.05)" }}>
-                <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.8)", lineHeight: 1.5 }}>{n.text}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Filler chips */}
-        {result.filler_words_found.length > 0 && (
-          <div>
-            <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "8px" }}>Fillers detected</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-              {result.filler_words_found.map((w: string) => (
-                <span key={w} style={{ padding: "4px 10px", borderRadius: "999px", border: "1px solid rgba(240,245,243,0.1)", fontSize: "0.75rem", color: "rgba(240,245,243,0.5)" }}>{w}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Transcript */}
-        {recorder.finalTranscript && (
-          <div className="feature-card" style={{ padding: "16px 20px" }}>
-            <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.3)", fontWeight: 600, marginBottom: "8px" }}>Your transcript</p>
-            <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.6)", lineHeight: 1.6 }}>{recorder.finalTranscript}</p>
-          </div>
-        )}
-
-        <button onClick={() => onComplete(result.score)} className="btn-pill btn-primary w-full" style={{ padding: "14px 24px" }}>
-          Complete lesson
-        </button>
-      </div>
-    );
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// QuizLesson
-// ---------------------------------------------------------------------------
-
-function QuizLesson({ drill, onComplete }: { drill: QuizDrill; onComplete: (score: number) => void }) {
-  const [selected, setSelected] = useState<number | null>(null);
-
-  const isCorrect = selected === drill.correctIndex;
-  const score = isCorrect ? 100 : 60;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <p style={{ fontSize: "1rem", lineHeight: 1.7, color: "var(--fg)", fontWeight: 600 }}>{drill.question}</p>
-
-      <ul style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        {drill.options.map((opt, i) => {
-          let borderColor = "rgba(45,255,192,0.12)";
-          let bg = "rgba(240,245,243,0.03)";
-          if (selected !== null) {
-            if (i === drill.correctIndex) { borderColor = "rgba(34,197,94,0.6)"; bg = "rgba(34,197,94,0.1)"; }
-            else if (i === selected) { borderColor = "rgba(239,68,68,0.6)"; bg = "rgba(239,68,68,0.1)"; }
-          }
-          return (
-            <li key={i}>
-              <button
-                disabled={selected !== null}
-                onClick={() => setSelected(i)}
-                className="feature-card w-full text-left"
-                style={{ padding: "12px 16px", fontSize: "0.875rem", borderColor, background: bg, color: "var(--fg)", cursor: selected !== null ? "default" : "pointer" }}
-              >
-                {opt}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      {selected !== null && (
-        <>
-          <div className="feature-card" style={{ padding: "12px 16px", borderColor: isCorrect ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)", background: isCorrect ? "rgba(34,197,94,0.06)" : "rgba(239,68,68,0.06)" }}>
-            <p style={{ fontSize: "0.75rem", fontWeight: 700, color: isCorrect ? "#4ade80" : "#f87171", marginBottom: "4px" }}>
-              {isCorrect ? "Correct!" : "Not quite"}
-            </p>
-            <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.7)", lineHeight: 1.5 }}>{drill.explanation}</p>
-          </div>
-          <button onClick={() => onComplete(score)} className="btn-pill btn-primary w-full" style={{ padding: "14px 24px" }}>
-            Complete lesson
-          </button>
-        </>
-      )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// LessonComplete
+// Speaking lesson
 // ---------------------------------------------------------------------------
 
-function LessonComplete({ score, drill, onNext, onBack, hasNext }: { score: number; drill: Drill; onNext: () => void; onBack: () => void; hasNext: boolean }) {
+function SpeakingLesson({
+  drill,
+  onComplete,
+  onBack,
+}: {
+  drill: SpeakingDrill;
+  onComplete: (score: number) => void;
+  onBack: () => void;
+}) {
+  const { state, elapsed, start, stop, reset } = useSpeechRecorder();
+  const [result, setResult] = useState<PracticeAnalyzeResult | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Auto-stop when drill duration is reached
+  useEffect(() => {
+    if (state.status === "recording") {
+      autoStopRef.current = setTimeout(stop, drill.durationSeconds * 1000);
+    }
+    return () => {
+      if (autoStopRef.current) clearTimeout(autoStopRef.current);
+    };
+  }, [state.status, drill.durationSeconds, stop]);
+
+  // Analyze once recording finishes
+  useEffect(() => {
+    if (state.status !== "done") return;
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    const wpm =
+      state.durationSeconds > 0
+        ? (state.wordCount / state.durationSeconds) * 60
+        : 0;
+    analyzePracticeDrill({
+      transcript: state.transcript,
+      words_per_minute: Math.round(wpm),
+      filler_word_count: state.fillerCount,
+      duration_seconds: state.durationSeconds,
+    })
+      .then(setResult)
+      .catch(() => {
+        const localScore = Math.max(
+          0,
+          Math.min(100, 80 - state.fillerCount * 5 + (wpm >= 110 && wpm <= 160 ? 10 : 0))
+        );
+        setResult({
+          score: localScore,
+          nudges: [],
+          filler_words_found: [],
+          wpm: Math.round(wpm),
+        });
+        setAnalyzeError("Backend unreachable — showing estimated score.");
+      })
+      .finally(() => setAnalyzing(false));
+  }, [state.status, state.transcript, state.wordCount, state.fillerCount, state.durationSeconds]);
+
+  const remaining = Math.max(0, drill.durationSeconds - elapsed);
+  const progressPct = Math.min(100, (elapsed / drill.durationSeconds) * 100);
+
   return (
-    <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center" style={{ padding: "40px 24px" }}>
-      <div className="fade-in-up text-center" style={{ maxWidth: "400px", display: "flex", flexDirection: "column", alignItems: "center", gap: "16px" }}>
-        <ScoreRing score={score} />
-        <h2 style={{ fontSize: "clamp(1.5rem, 4vw, 2.5rem)", fontWeight: 900, letterSpacing: "-0.04em" }}>Lesson complete</h2>
-        <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.5)" }}>{drill.title}</p>
-        <div className="flex" style={{ gap: "12px", marginTop: "8px" }}>
-          <button onClick={onBack} className="btn-pill btn-ghost" style={{ padding: "10px 20px" }}>Back to path</button>
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="max-w-xl mx-auto space-y-6">
+        <button
+          type="button"
+          onClick={() => { reset(); onBack(); }}
+          className="text-sm text-gray-500 hover:text-aqua inline-flex items-center gap-1 transition-colors"
+        >
+          ← Back to path
+        </button>
+
+        <div>
+          <p className="text-xs font-medium text-aqua uppercase tracking-wide mb-1">
+            Speaking drill
+          </p>
+          <h1 className="text-2xl font-bold text-white mb-1">{drill.title}</h1>
+          <p className="text-sm text-gray-400">{drill.description}</p>
+        </div>
+
+        {/* Tip */}
+        <div className="rounded-xl border border-gray-700 bg-gray-900/50 px-4 py-3">
+          <p className="text-xs text-aqua font-medium mb-1">Coaching tip</p>
+          <p className="text-sm text-gray-300 leading-relaxed">{drill.tip}</p>
+        </div>
+
+        {/* Prompt */}
+        <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Your prompt</p>
+          <p className="text-base text-gray-100 leading-relaxed">{drill.prompt}</p>
+          <p className="text-xs text-gray-500 mt-3">
+            Target: {drill.durationSeconds}s · Speak clearly into your mic
+          </p>
+        </div>
+
+        {/* Idle */}
+        {state.status === "idle" && (
+          <button
+            onClick={start}
+            className="w-full rounded-xl bg-aqua px-4 py-4 text-base font-semibold text-gray-950 hover:bg-aqua-300 transition-colors"
+          >
+            Start recording
+          </button>
+        )}
+
+        {/* Recording */}
+        {state.status === "recording" && (
+          <div className="space-y-4">
+            <div>
+              <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  Recording…
+                </span>
+                <span>{remaining}s remaining</span>
+              </div>
+              <div className="h-2 rounded-full bg-gray-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-aqua transition-all duration-500"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+            </div>
+
+            {state.transcript && (
+              <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-4 max-h-36 overflow-y-auto">
+                <p className="text-xs text-gray-500 mb-1">Live transcript</p>
+                <p className="text-sm text-gray-300 leading-relaxed">{state.transcript}</p>
+              </div>
+            )}
+
+            <button
+              onClick={stop}
+              className="w-full rounded-xl border border-gray-600 px-4 py-3 text-sm font-medium text-gray-200 hover:border-aqua hover:text-aqua transition-colors"
+            >
+              Stop early
+            </button>
+          </div>
+        )}
+
+        {/* Error */}
+        {state.status === "error" && (
+          <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-4">
+            <p className="text-sm font-medium text-gray-200 mb-1">
+              Could not access microphone
+            </p>
+            <p className="text-sm text-gray-400">{state.errorMsg}</p>
+            <button
+              onClick={reset}
+              className="mt-3 text-xs text-aqua hover:underline"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {/* Results */}
+        {state.status === "done" && (
+          <div className="space-y-4">
+            {analyzing && (
+              <div className="flex items-center gap-3 text-sm text-gray-400 py-2">
+                <div className="w-5 h-5 border-2 border-aqua border-t-transparent rounded-full animate-spin shrink-0" />
+                Analysing your speech…
+              </div>
+            )}
+
+            {analyzeError && (
+              <p className="text-xs text-gray-500">{analyzeError}</p>
+            )}
+
+            {result && !analyzing && (
+              <>
+                {/* Score card */}
+                <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5 flex items-center gap-5">
+                  <ScoreRing score={result.score} />
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-medium text-gray-300">Drill score</p>
+                    <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+                      <span>
+                        WPM:{" "}
+                        <span className="text-gray-200 font-semibold">
+                          {result.wpm || "—"}
+                        </span>
+                      </span>
+                      <span>
+                        Fillers:{" "}
+                        <span className="text-gray-200 font-semibold">
+                          {state.fillerCount}
+                        </span>
+                      </span>
+                      <span>
+                        Duration:{" "}
+                        <span className="text-gray-200 font-semibold">
+                          {state.durationSeconds}s
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Nudges */}
+                {result.nudges.length > 0 && (
+                  <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">
+                      Coaching feedback
+                    </p>
+                    <ul className="space-y-2">
+                      {result.nudges.map((n, i) => (
+                        <li key={i} className="flex gap-2 text-sm text-gray-300">
+                          <span className="text-aqua shrink-0 mt-0.5">•</span>
+                          {n.text}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {result.nudges.length === 0 && (
+                  <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-4">
+                    <p className="text-sm text-green-300 font-medium">
+                      Clean delivery — no flags raised.
+                    </p>
+                  </div>
+                )}
+
+                {/* Filler words */}
+                {result.filler_words_found.length > 0 && (
+                  <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+                      Filler words detected
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {result.filler_words_found.map((w, i) => (
+                        <span
+                          key={i}
+                          className="rounded-full bg-aqua/10 border border-aqua/30 px-2.5 py-0.5 text-xs text-aqua font-medium"
+                        >
+                          {w}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Transcript */}
+                <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+                    Your transcript
+                  </p>
+                  <p className="text-sm text-gray-300 leading-relaxed font-mono">
+                    {state.transcript || <span className="italic text-gray-600">No speech detected.</span>}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => onComplete(result.score)}
+                  className="w-full rounded-xl bg-aqua px-4 py-4 text-base font-semibold text-gray-950 hover:bg-aqua-300 transition-colors"
+                >
+                  Complete lesson
+                </button>
+
+                <button
+                  onClick={reset}
+                  className="w-full rounded-xl border border-gray-600 px-4 py-3 text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors"
+                >
+                  Try again
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Quiz lesson
+// ---------------------------------------------------------------------------
+
+function QuizLesson({
+  drill,
+  onComplete,
+  onBack,
+}: {
+  drill: QuizDrill;
+  onComplete: (score: number) => void;
+  onBack: () => void;
+}) {
+  const [selected, setSelected] = useState<number | null>(null);
+  const answered = selected !== null;
+  const correct = selected === drill.correctIndex;
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="max-w-xl mx-auto space-y-6">
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-gray-500 hover:text-aqua inline-flex items-center gap-1 transition-colors"
+        >
+          ← Back to path
+        </button>
+
+        <div>
+          <p className="text-xs font-medium text-aqua uppercase tracking-wide mb-1">
+            Knowledge check
+          </p>
+          <h1 className="text-2xl font-bold text-white mb-1">{drill.title}</h1>
+          <p className="text-sm text-gray-400">{drill.description}</p>
+        </div>
+
+        <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
+          <p className="text-base text-gray-100 leading-relaxed font-medium">
+            {drill.question}
+          </p>
+        </div>
+
+        <ul className="space-y-2">
+          {drill.options.map((opt, i) => {
+            let cls =
+              "border-gray-700 bg-gray-900/50 text-gray-300 hover:border-gray-600";
+            if (answered) {
+              if (i === drill.correctIndex)
+                cls = "border-green-500/60 bg-green-500/10 text-green-300";
+              else if (i === selected)
+                cls = "border-red-500/60 bg-red-500/10 text-red-300";
+              else cls = "border-gray-800 bg-gray-900/30 text-gray-500";
+            } else if (selected === i) {
+              cls = "border-aqua bg-aqua/10 text-white";
+            }
+            return (
+              <li key={i}>
+                <button
+                  onClick={() => !answered && setSelected(i)}
+                  disabled={answered}
+                  className={`w-full text-left rounded-xl border-2 px-4 py-3 text-sm transition-colors ${cls}`}
+                >
+                  {opt}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+
+        {answered && (
+          <div
+            className={`rounded-xl border p-4 ${
+              correct
+                ? "border-green-500/30 bg-green-500/10"
+                : "border-gray-700 bg-gray-900/50"
+            }`}
+          >
+            <p
+              className={`text-sm font-medium mb-1 ${
+                correct ? "text-green-300" : "text-gray-300"
+              }`}
+            >
+              {correct
+                ? "Correct!"
+                : `The right answer is: "${drill.options[drill.correctIndex]}"`}
+            </p>
+            <p className="text-sm text-gray-400 leading-relaxed">
+              {drill.explanation}
+            </p>
+          </div>
+        )}
+
+        {answered && (
+          <button
+            onClick={() => onComplete(correct ? 100 : 60)}
+            className="w-full rounded-xl bg-aqua px-4 py-4 text-base font-semibold text-gray-950 hover:bg-aqua-300 transition-colors"
+          >
+            Continue
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lesson complete screen
+// ---------------------------------------------------------------------------
+
+function LessonComplete({
+  drill,
+  score,
+  hasNext,
+  onNext,
+  onPath,
+}: {
+  drill: Drill;
+  score: number;
+  hasNext: boolean;
+  onNext: () => void;
+  onPath: () => void;
+}) {
+  return (
+    <div className="flex-1 flex items-center justify-center p-6">
+      <div className="max-w-md text-center space-y-6">
+        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-500/20 text-4xl text-green-400">
+          ✓
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-white mb-1">Lesson complete!</h2>
+          <p className="text-gray-400">{drill.title}</p>
+        </div>
+        {drill.type === "speaking" && (
+          <div className="flex justify-center">
+            <ScoreRing score={score} size={80} />
+          </div>
+        )}
+        <div className="flex gap-3 justify-center">
+          <button
+            onClick={onPath}
+            className="rounded-xl border border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors"
+          >
+            Back to path
+          </button>
           {hasNext && (
-            <button onClick={onNext} className="btn-pill btn-primary" style={{ padding: "10px 20px" }}>Next lesson</button>
+            <button
+              onClick={onNext}
+              className="rounded-xl bg-aqua px-4 py-2.5 text-sm font-semibold text-gray-950 hover:bg-aqua-300 transition-colors"
+            >
+              Next lesson
+            </button>
           )}
         </div>
       </div>
@@ -528,118 +759,134 @@ function LessonComplete({ score, drill, onNext, onBack, hasNext }: { score: numb
 // Main page
 // ---------------------------------------------------------------------------
 
+type View = "pick-session" | "path" | "lesson" | "complete";
+
 export default function PracticePage() {
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingSessions, setLoadingSessions] = useState(true);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
-  const [view, setView] = useState<View>("pick-session");
+
   const [drills, setDrills] = useState<Drill[]>(DEMO_DRILLS);
   const [completedScores, setCompletedScores] = useState<Record<string, number>>({});
   const [currentDrillIndex, setCurrentDrillIndex] = useState(0);
   const [lastScore, setLastScore] = useState(0);
-
-  const completedCount = Object.keys(completedScores).length;
-  const totalDrills = drills.length;
-  const progressPct = totalDrills ? (completedCount / totalDrills) * 100 : 0;
+  const [view, setView] = useState<View>("pick-session");
 
   useEffect(() => {
     listSessions(getCurrentUserId())
       .then((data) => setSessions(data ?? []))
       .catch(() => setSessions([]))
-      .finally(() => setLoading(false));
+      .finally(() => setLoadingSessions(false));
   }, []);
 
-  const loadSession = useCallback((sessionId: string | null) => {
-    setSelectedSessionId(sessionId);
-    if (!sessionId) { setDrills(DEMO_DRILLS); return; }
+  const loadReport = useCallback((sessionId: string) => {
     setReportLoading(true);
     getSessionReport(sessionId)
       .then((r) => {
-        const built = buildDrillsFromReport(r.report.areas_to_improve ?? [], r.report.suggested_drills ?? []);
-        setDrills(built.length ? built : DEMO_DRILLS);
+        const built = buildDrillsFromReport(
+          r.report.areas_to_improve ?? [],
+          r.report.suggested_drills ?? []
+        );
+        setDrills(built.length >= 2 ? built : DEMO_DRILLS);
       })
       .catch(() => setDrills(DEMO_DRILLS))
       .finally(() => setReportLoading(false));
   }, []);
 
-  const openLesson = (index: number) => {
-    setCurrentDrillIndex(index);
-    setView("lesson");
-  };
+  const completedCount = Object.keys(completedScores).length;
+  const totalDrills = drills.length;
+  const progressPct = totalDrills ? (completedCount / totalDrills) * 100 : 0;
 
   const handleComplete = (score: number) => {
     const drill = drills[currentDrillIndex];
-    setLastScore(score);
     setCompletedScores((prev) => ({ ...prev, [drill.id]: score }));
+    setLastScore(score);
     setView("complete");
   };
 
-  const breadcrumb = (
-    <div className="flex items-center gap-2" style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)", marginBottom: "24px" }}>
-      <Link href="/app" style={{ color: "rgba(240,245,243,0.4)" }}>Sessions</Link>
-      <span style={{ color: "rgba(240,245,243,0.2)" }}>/</span>
-      {view !== "pick-session" ? (
-        <button type="button" onClick={() => setView("pick-session")} style={{ color: "rgba(240,245,243,0.4)", background: "none", border: "none", cursor: "pointer" }}>Practice</button>
-      ) : (
-        <span style={{ color: "rgba(240,245,243,0.6)" }}>Practice</span>
-      )}
-    </div>
-  );
-
-  // ── pick-session ─────────────────────────────────────────────────────────
+  // ---- pick-session ----
   if (view === "pick-session") {
     return (
-      <div className="flex-1 overflow-y-auto" style={{ padding: "40px 24px" }}>
-        <div style={{ maxWidth: "640px", margin: "0 auto" }} className="fade-in-up">
-          {breadcrumb}
-          <h1 style={{ fontSize: "clamp(2rem, 5vw, 3rem)", fontWeight: 900, letterSpacing: "-0.04em", lineHeight: 0.95, marginBottom: "8px" }}>Practice</h1>
-          <p style={{ fontSize: "0.95rem", lineHeight: 1.7, color: "rgba(240,245,243,0.5)", marginBottom: "32px" }}>
-            Select a session to unlock lessons based on your coaching report, or use sample lessons.
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+            <Link href="/app" className="hover:text-aqua transition-colors">
+              Sessions
+            </Link>
+            <span>/</span>
+            <span className="text-gray-400">Practice</span>
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-1">Practice path</h1>
+          <p className="text-sm text-gray-500 mb-8">
+            Pick a session to unlock drills tailored to your report, or use the
+            default path.
           </p>
 
-          <section style={{ marginBottom: "24px" }}>
-            <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "12px" }}>Select a session</p>
-            {loading ? (
-              <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)" }}>Loading sessions…</p>
+          <section className="mb-6 space-y-2">
+            <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">
+              Select a session
+            </h2>
+
+            <button
+              onClick={() => {
+                setSelectedSessionId(null);
+                setDrills(DEMO_DRILLS);
+                setCompletedScores({});
+              }}
+              className={`w-full text-left rounded-xl border-2 px-4 py-3 text-sm transition-colors ${
+                selectedSessionId === null
+                  ? "border-aqua bg-aqua/10 text-white"
+                  : "border-gray-700 bg-gray-900/50 text-gray-300 hover:border-gray-600"
+              }`}
+            >
+              Default practice path
+            </button>
+
+            {loadingSessions ? (
+              <p className="text-sm text-gray-500 py-2">Loading sessions…</p>
             ) : (
-              <ul style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <li>
-                  <button
-                    onClick={() => loadSession(null)}
-                    className="feature-card w-full text-left"
-                    style={{ padding: "12px 16px", fontSize: "0.875rem", borderColor: selectedSessionId === null ? "rgba(45,255,192,0.5)" : undefined, background: selectedSessionId === null ? "rgba(45,255,192,0.08)" : undefined, color: "var(--fg)" }}
-                  >
-                    Use sample lessons (no session)
-                  </button>
-                </li>
-                {sessions.map((s) => (
-                  <li key={s.id}>
-                    <button
-                      onClick={() => loadSession(s.id)}
-                      className="feature-card w-full text-left"
-                      style={{ padding: "12px 16px", borderColor: selectedSessionId === s.id ? "rgba(45,255,192,0.5)" : undefined, background: selectedSessionId === s.id ? "rgba(45,255,192,0.08)" : undefined }}
-                    >
-                      <span style={{ display: "block", fontWeight: 600, fontSize: "0.875rem", color: "var(--fg)" }}>
-                        {s.started_at ? format(new Date(s.started_at), "MMM d, yyyy — h:mm a") : "Session"}
-                      </span>
-                      {s.overall_score != null && (
-                        <span style={{ display: "block", fontSize: "0.7rem", color: "rgba(240,245,243,0.3)", marginTop: "2px" }}>Score: {Math.round(s.overall_score)}</span>
-                      )}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              sessions.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setSelectedSessionId(s.id);
+                    setCompletedScores({});
+                    loadReport(s.id);
+                  }}
+                  className={`w-full text-left rounded-xl border-2 px-4 py-3 transition-colors ${
+                    selectedSessionId === s.id
+                      ? "border-aqua bg-aqua/10 text-white"
+                      : "border-gray-700 bg-gray-900/50 text-gray-300 hover:border-gray-600"
+                  }`}
+                >
+                  <span className="block text-sm font-medium">
+                    {s.started_at
+                      ? format(new Date(s.started_at), "MMM d, yyyy — h:mm a")
+                      : "Session"}
+                  </span>
+                  {s.overall_score != null && (
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      Score: {Math.round(s.overall_score)}
+                    </span>
+                  )}
+                </button>
+              ))
             )}
           </section>
 
           {reportLoading ? (
-            <p style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)" }}>Loading report…</p>
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <div className="w-4 h-4 border-2 border-aqua border-t-transparent rounded-full animate-spin" />
+              Building your path…
+            </div>
           ) : (
             <button
-              onClick={() => { setCompletedScores({}); setView("path"); }}
-              className="btn-pill btn-primary w-full"
-              style={{ padding: "14px 24px" }}
+              onClick={() => {
+                setCurrentDrillIndex(0);
+                setView("path");
+              }}
+              className="w-full rounded-xl bg-aqua px-4 py-4 text-base font-semibold text-gray-950 hover:bg-aqua-300 transition-colors"
             >
               Start practice
             </button>
@@ -649,93 +896,156 @@ export default function PracticePage() {
     );
   }
 
-  // ── path ──────────────────────────────────────────────────────────────────
+  // ---- path ----
   if (view === "path") {
     return (
-      <div className="flex-1 overflow-y-auto" style={{ padding: "40px 24px" }}>
-        <div style={{ maxWidth: "560px", margin: "0 auto" }}>
-          {breadcrumb}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-xl mx-auto">
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+            <Link href="/app" className="hover:text-aqua transition-colors">
+              Sessions
+            </Link>
+            <span>/</span>
+            <button
+              type="button"
+              onClick={() => setView("pick-session")}
+              className="hover:text-aqua transition-colors"
+            >
+              Practice
+            </button>
+          </div>
 
-          <div style={{ marginBottom: "32px" }}>
-            <div className="flex justify-between" style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(240,245,243,0.4)", fontWeight: 600, marginBottom: "8px" }}>
-              <span>Progress</span>
-              <span>{completedCount} / {totalDrills}</span>
+          {/* Progress */}
+          <div className="mb-8">
+            <div className="flex justify-between text-sm text-gray-400 mb-2">
+              <span>Your progress</span>
+              <span>
+                {completedCount} / {totalDrills} lessons
+              </span>
             </div>
-            <div style={{ height: "4px", borderRadius: "999px", background: "rgba(240,245,243,0.06)", overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: "999px", background: "var(--aqua)", transition: "width 0.5s", width: `${progressPct}%` }} />
+            <div className="h-3 rounded-full bg-gray-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-aqua transition-all duration-500"
+                style={{ width: `${progressPct}%` }}
+              />
             </div>
           </div>
 
-          <h2 style={{ fontSize: "clamp(1.5rem, 4vw, 2rem)", fontWeight: 900, letterSpacing: "-0.04em", marginBottom: "20px" }}>Practice path</h2>
-          <ul style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <h2 className="text-xl font-bold text-white mb-6">Practice path</h2>
+
+          <ul className="space-y-3">
             {drills.map((drill, i) => {
               const done = drill.id in completedScores;
               const drillScore = completedScores[drill.id];
+
               return (
                 <li key={drill.id}>
                   <button
-                    onClick={() => openLesson(i)}
-                    className="feature-card w-full flex items-center"
-                    style={{
-                      gap: "16px",
-                      padding: "16px 20px",
-                      textAlign: "left",
-                      borderColor: done ? "rgba(45,255,192,0.3)" : undefined,
-                      background: done ? "rgba(45,255,192,0.05)" : undefined,
+                    onClick={() => {
+                      setCurrentDrillIndex(i);
+                      setView("lesson");
                     }}
+                    className={`w-full flex items-center gap-4 rounded-2xl border-2 px-5 py-4 text-left transition-all ${
+                      done
+                        ? "border-green-500/50 bg-green-500/10 text-green-300"
+                        : "border-aqua/50 bg-gray-900/50 text-white hover:border-aqua hover:bg-aqua/5"
+                    }`}
                   >
-                    <span style={{ width: "40px", height: "40px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: "0.875rem", fontWeight: 700, background: done ? "rgba(45,255,192,0.15)" : "rgba(45,255,192,0.1)", color: "var(--aqua)" }}>
-                      {done ? "✓" : i + 1}
+                    <span
+                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-lg font-bold ${
+                        done
+                          ? "bg-green-500/20 text-green-300"
+                          : "bg-aqua/15 text-aqua"
+                      }`}
+                    >
+                      {done ? "✓" : drill.type === "speaking" ? "🎙" : "?"}
                     </span>
-                    <span style={{ flex: 1 }}>
-                      <span style={{ display: "block", fontWeight: 600, fontSize: "0.9rem", color: "var(--fg)" }}>{drill.title}</span>
-                      <span style={{ display: "block", fontSize: "0.75rem", color: "rgba(240,245,243,0.35)", marginTop: "2px" }}>{drill.description}</span>
-                    </span>
-                    {done && drillScore != null && (
-                      <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--aqua)" }}>{Math.round(drillScore)}</span>
+
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{drill.title}</p>
+                      <p
+                        className={`text-xs mt-0.5 flex items-center gap-2 ${
+                          done ? "text-green-400/70" : "text-gray-400"
+                        }`}
+                      >
+                        <span>
+                          {drill.type === "speaking" ? "Speaking" : "Quiz"}
+                        </span>
+                        {drill.type === "speaking" && (
+                          <span>· {(drill as SpeakingDrill).durationSeconds}s</span>
+                        )}
+                        <span>· {drill.description}</span>
+                      </p>
+                    </div>
+
+                    {done && drillScore != null && drill.type === "speaking" && (
+                      <span className="text-sm font-semibold text-green-300 shrink-0">
+                        {Math.round(drillScore)}
+                      </span>
                     )}
                   </button>
                 </li>
               );
             })}
           </ul>
-        </div>
-      </div>
-    );
-  }
 
-  // ── lesson ────────────────────────────────────────────────────────────────
-  if (view === "lesson") {
-    const drill = drills[currentDrillIndex];
-    return (
-      <div className="flex-1 overflow-y-auto" style={{ padding: "40px 24px" }}>
-        <div style={{ maxWidth: "560px", margin: "0 auto" }}>
-          <button type="button" onClick={() => setView("path")} style={{ fontSize: "0.875rem", color: "rgba(240,245,243,0.4)", background: "none", border: "none", cursor: "pointer", marginBottom: "24px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-            ← Back to path
-          </button>
-          <p style={{ fontSize: "0.7rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--aqua)", fontWeight: 600, marginBottom: "6px" }}>
-            {drill.type === "speaking" ? `Speaking · ${drill.durationSeconds}s` : "Quiz"}
-          </p>
-          <h1 style={{ fontSize: "clamp(1.5rem, 4vw, 2.5rem)", fontWeight: 900, letterSpacing: "-0.04em", marginBottom: "24px" }}>{drill.title}</h1>
-          {drill.type === "speaking" ? (
-            <SpeakingLesson key={drill.id} drill={drill} onComplete={handleComplete} />
-          ) : (
-            <QuizLesson key={drill.id} drill={drill} onComplete={handleComplete} />
+          {completedCount === totalDrills && totalDrills > 0 && (
+            <div className="mt-8 rounded-xl border border-green-500/30 bg-green-500/10 p-6 text-center">
+              <p className="text-green-300 font-semibold text-lg">
+                Path complete!
+              </p>
+              <p className="text-sm text-gray-400 mt-1">
+                Avg score:{" "}
+                {Math.round(
+                  Object.values(completedScores).reduce((a, b) => a + b, 0) /
+                    Object.values(completedScores).length
+                )}
+              </p>
+            </div>
           )}
         </div>
       </div>
     );
   }
 
-  // ── complete ──────────────────────────────────────────────────────────────
+  // ---- lesson ----
+  if (view === "lesson") {
+    const drill = drills[currentDrillIndex];
+    if (!drill) return null;
+
+    if (drill.type === "speaking") {
+      return (
+        <SpeakingLesson
+          drill={drill as SpeakingDrill}
+          onComplete={handleComplete}
+          onBack={() => setView("path")}
+        />
+      );
+    }
+
+    return (
+      <QuizLesson
+        drill={drill as QuizDrill}
+        onComplete={handleComplete}
+        onBack={() => setView("path")}
+      />
+    );
+  }
+
+  // ---- complete ----
   if (view === "complete") {
+    const drill = drills[currentDrillIndex];
+    if (!drill) return null;
     return (
       <LessonComplete
+        drill={drill}
         score={lastScore}
-        drill={drills[currentDrillIndex]}
-        onBack={() => setView("path")}
         hasNext={currentDrillIndex < drills.length - 1}
-        onNext={() => openLesson(currentDrillIndex + 1)}
+        onNext={() => {
+          setCurrentDrillIndex((i) => i + 1);
+          setView("lesson");
+        }}
+        onPath={() => setView("path")}
       />
     );
   }
