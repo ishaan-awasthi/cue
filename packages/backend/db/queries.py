@@ -260,6 +260,34 @@ def update_file_status(
 
 
 # ---------------------------------------------------------------------------
+# Transcripts (Supabase Storage — bucket: "transcripts")
+# ---------------------------------------------------------------------------
+
+TRANSCRIPT_BUCKET = "transcripts"
+
+
+def save_transcript(session_id: str, timestamp_utc: str, text: str) -> str:
+    """Upload transcript text to Supabase Storage as {session_id}_{timestamp}.txt."""
+    path = f"{session_id}_{timestamp_utc}.txt"
+    supabase.storage.from_(TRANSCRIPT_BUCKET).upload(
+        path=path,
+        file=text.encode("utf-8"),
+        file_options={"content-type": "text/plain; charset=utf-8", "upsert": "true"},
+    )
+    return path
+
+
+def get_transcript(session_id: str) -> Optional[str]:
+    """Download transcript for a session. Returns None if not found."""
+    files = supabase.storage.from_(TRANSCRIPT_BUCKET).list()
+    match = next((f for f in files if f["name"].startswith(session_id)), None)
+    if not match:
+        return None
+    data = supabase.storage.from_(TRANSCRIPT_BUCKET).download(match["name"])
+    return data.decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
